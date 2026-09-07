@@ -1,2 +1,2 @@
 TOKEN=replace-with-a-long-random-token
-PROVIDERS={"mysub":{"type":"base64","url":"https://example.com/subscribe","minRefreshIntervalSeconds":300}}
+PROVIDERS={"mysub":{"type":"base64","url":"https://example.com/subscribe","cacheTtlSeconds":300}}

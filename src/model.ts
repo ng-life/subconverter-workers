@@ -1,7 +1,7 @@
 export const targets = ['clash', 'loon', 'quanx', 'shadowsocks'] as const;
-export type Target = typeof targets[number];
+export type Target = (typeof targets)[number];
 export const inputTypes = ['auto', 'base64', 'uri', 'clash', 'loon', 'quanx', 'sip008'] as const;
-export type InputType = typeof inputTypes[number];
+export type InputType = (typeof inputTypes)[number];
 export type Dict = Record<string, unknown>;
 export interface ProxyNode extends Dict {
   name: string;
@@ -9,17 +9,40 @@ export interface ProxyNode extends Dict {
   server: string;
   port: number;
 }
-export interface Parsed { nodes: ProxyNode[]; skipped: number }
-export interface Output { body: string; contentType: string; skipped: number; count: number }
+
+/**
+ * Provider-independent subscription data stored in Durable Object storage.
+ * Parsers normalize every supported source format into this model, while
+ * serializers convert it to the requested output format at request time.
+ */
+export interface SubscriptionModel {
+  schemaVersion: 1;
+  nodes: ProxyNode[];
+  skipped: number;
+}
+
+export interface Output {
+  body: string;
+  contentType: string;
+  skipped: number;
+  count: number;
+}
+
 export interface Provider {
   type: InputType;
   url: string;
   headers: Record<string, string>;
-  minRefreshIntervalSeconds: number;
+  cacheTtlSeconds: number;
   timeoutSeconds: number;
 }
 export class AppError extends Error {
-  constructor(public status: number, public code: string, public retryAfter?: number) { super(code); }
+  constructor(
+    public status: number,
+    public code: string,
+    public retryAfter?: number,
+  ) {
+    super(code);
+  }
 }
 export function record(v: unknown): Dict {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('Expected object');
@@ -40,12 +63,22 @@ export function port(v: unknown): number {
 }
 export function normalize(v: unknown): ProxyNode {
   const r = record(v);
-  const n: ProxyNode = { ...r, type: text(r.type).toLowerCase(), server: text(r.server).replace(/^\[|\]$/g, ''), port: port(r.port), name: str(r.name) || str(r.server) };
+  const n: ProxyNode = {
+    ...r,
+    type: text(r.type).toLowerCase(),
+    server: text(r.server).replace(/^\[|\]$/g, ''),
+    port: port(r.port),
+    name: str(r.name) || str(r.server),
+  };
   if (/[\s,/#?@]/.test(n.server)) throw new Error('Invalid server');
   n.name = n.name.replace(/[\x00-\x1f\x7f]/g, ' ').trim() || n.server;
   if (['ss', 'ssr', 'trojan', 'hysteria2', 'tuic'].includes(n.type)) n.password = text(n.password);
   if (['ss', 'ssr', 'vmess'].includes(n.type)) n.cipher = text(n.cipher);
   if (['vmess', 'vless', 'tuic'].includes(n.type)) n.uuid = text(n.uuid);
-  if (['vmess', 'vless'].includes(n.type) && !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(str(n.uuid))) throw new Error('Invalid UUID');
+  if (
+    ['vmess', 'vless'].includes(n.type) &&
+    !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(str(n.uuid))
+  )
+    throw new Error('Invalid UUID');
   return n;
 }
