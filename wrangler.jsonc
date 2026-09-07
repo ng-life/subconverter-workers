@@ -6,11 +6,11 @@
   "compatibility_flags": ["nodejs_compat"],
   "keep_vars": true,
   "durable_objects": {
-    "bindings": [{ "name": "SUBSCRIPTIONS", "class_name": "SubscriptionCache" }]
+    "bindings": [{ "name": "SUBSCRIPTIONS", "class_name": "SubscriptionCache" }],
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SubscriptionCache"] }],
   "observability": {
     "enabled": true,
-    "logs": { "enabled": true, "invocation_logs": false }
-  }
+    "logs": { "enabled": true, "invocation_logs": false },
+  },
 }
