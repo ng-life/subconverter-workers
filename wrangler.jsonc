@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "subconverter-workers",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "keep_vars": true,
+  "durable_objects": {
+    "bindings": [{ "name": "SUBSCRIPTIONS", "class_name": "SubscriptionCache" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SubscriptionCache"] }],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false }
+  }
+}
