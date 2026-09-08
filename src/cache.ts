@@ -234,8 +234,13 @@ export class SubscriptionCache extends DurableObject<Env> {
             const result = await fetchSubscription(provider);
             fetchSpan.setAttribute('subscription.upstream_bytes', result.upstreamBytes);
             fetchSpan.setAttribute('subscription.static_body', provider.body !== undefined);
-            if (result.metadataError)
-              fetchSpan.setAttribute('subscription.metadata.error_code', result.metadataError);
+            if (result.metadataError) {
+              fetchSpan.setAttribute('subscription.metadata.error_code', result.metadataError.code);
+              fetchSpan.setAttribute(
+                'subscription.metadata.error_detail',
+                result.metadataError.detail,
+              );
+            }
             return result;
           },
         );
@@ -258,7 +263,7 @@ export class SubscriptionCache extends DurableObject<Env> {
            WHERE id = 1`,
           Date.now(),
           upstream.userinfo,
-          upstream.metadataError,
+          upstream.metadataError?.detail ?? null,
           JSON.stringify(model),
         );
         span.setAttributes({
@@ -275,7 +280,8 @@ export class SubscriptionCache extends DurableObject<Env> {
         if (upstream.metadataError)
           logEvent('warn', 'subscription.metadata.failed', {
             provider: provider.name,
-            errorCode: upstream.metadataError,
+            errorCode: upstream.metadataError.code,
+            errorDetail: upstream.metadataError.detail,
           });
       } catch (error) {
         const code = error instanceof AppError ? error.code : 'SUBSCRIPTION_REFRESH_FAILED';
