@@ -308,6 +308,7 @@ function quanx(line: string): Dict {
     n.uuid = o.password;
   } else if (o.password) n.password = o.password;
   if (o.username) n.username = o.username;
+  if (o['server_check_url']) n['server_check_url'] = o['server_check_url'];
   common(n, o, 'quanx');
   if (n.type === 'ssr') {
     n.protocol = o['ssr-protocol'];
@@ -366,6 +367,7 @@ function quanx(line: string): Dict {
     'reality-base64-pubkey',
     'reality-hex-shortid',
     'vless-flow',
+    'server_check_url',
   ]);
   if (Object.keys(o).some((k) => !known.has(k))) n['_unsupported'] = true;
   return n;

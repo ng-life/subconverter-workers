@@ -217,10 +217,8 @@ export class SubscriptionCache extends DurableObject<Env> {
               'server.address': new URL(provider.url).hostname,
             });
             const result = await fetchSubscription(provider);
-            fetchSpan.setAttribute(
-              'subscription.upstream_bytes',
-              new TextEncoder().encode(result.body).byteLength,
-            );
+            fetchSpan.setAttribute('subscription.upstream_bytes', result.upstreamBytes);
+            fetchSpan.setAttribute('subscription.static_body', provider.body !== undefined);
             return result;
           },
         );

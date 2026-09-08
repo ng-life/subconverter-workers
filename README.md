@@ -65,6 +65,27 @@ Durable Object 只保存一份中间模型，不保存各目标格式的副本�
 
 `cacheTtlSeconds` 默认为 300 秒。旧配置项 `minRefreshIntervalSeconds` 仍然兼容，但新配置应使用 `cacheTtlSeconds`。
 
+### 静态 QuanX 节点与搬瓦工流量
+
+当节点由自己维护、`url` 仅用于查询搬瓦工 KiwiVM 服务信息时，可以在 QuanX Provider 中增加 `body`：
+
+```json
+{
+  "bandwagon": {
+    "type": "quanx",
+    "url": "https://api.64clouds.com/v1/getServiceInfo?veid=YOUR_VEID&api_key=YOUR_API_KEY",
+    "body": "vless=server.example.com:443, method=none, password=UUID, obfs=over-tls, obfs-host=example.com, reality-base64-pubkey=PUBLIC_KEY, reality-hex-shortid=SHORT_ID, vless-flow=xtls-rprx-vision, udp-relay=true, tag=bandwagon-vless\nshadowsocks=server.example.com:38388, method=chacha20-ietf-poly1305, password=PASSWORD, fast-open=false, udp-relay=true, tag=nas-shadowsocks",
+    "cacheTtlSeconds": 300,
+    "timeoutSeconds": 10
+  }
+}
+```
+
+- `body` 是静态 QuanX 节点正文，多条节点必须用换行分隔。
+- Worker 请求 `url`，使用 `data_counter`、`plan_monthly_data` 和 `monthly_data_multiplier` 生成 `Subscription-Userinfo`。
+- `data_next_reset` 会写入 `expire`，表示下次流量重置时间，并非 VPS 服务到期时间。
+- `url` 中包含管理 API Key，生产环境必须使用 `wrangler secret put PROVIDERS`，不要写入 `wrangler.jsonc` 或提交到仓库。
+
 本地开发时可以复制示例变量：
 
 ```bash

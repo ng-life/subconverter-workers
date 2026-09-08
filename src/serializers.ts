@@ -37,6 +37,7 @@ const baseKeys = new Set([
   'flow',
   'client-fingerprint',
   'reality-opts',
+  'server_check_url',
 ]);
 const clashTypes = new Set([
   'ss',
@@ -241,6 +242,7 @@ function quanx(n: ProxyNode): string {
     ['tfo', 'fast-open'],
   ])
     if (n[key] !== undefined) parts.push(`${out}=${bool(n, key)}`);
+  if (n['server_check_url']) parts.push(`server_check_url=${simple(n['server_check_url'])}`);
   parts.push(`tag=${simple(n.name)}`);
   return parts.join(', ');
 }
@@ -261,6 +263,8 @@ function sip008(n: ProxyNode): Dict {
           'plugin-opts',
           'udp',
           'tfo',
+          // QuanX-only health-check metadata does not affect the SIP008 connection.
+          'server_check_url',
         ].includes(k),
     )
   )
@@ -296,6 +300,8 @@ export function serialize(model: SubscriptionModel, target: Target): Output {
       if (target === 'clash') {
         if (!clashTypes.has(n.type)) throw new Error('Unsupported protocol');
         const proxy = { ...n };
+        // QuanX's per-node test URL is client metadata, not a Clash proxy field.
+        delete proxy['server_check_url'];
         // Clash's Trojan uses sni; VMess/VLESS use servername.
         if (n.type === 'trojan' && n.servername) {
           proxy.sni = n.servername;
