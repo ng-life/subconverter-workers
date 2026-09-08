@@ -34,6 +34,9 @@ const baseKeys = new Set([
   'protocol-param',
   'obfs',
   'obfs-param',
+  'flow',
+  'client-fingerprint',
+  'reality-opts',
 ]);
 const clashTypes = new Set([
   'ss',
@@ -97,11 +100,23 @@ function plugin(n: ProxyNode): Dict {
   } else if (n.plugin) throw new Error('Unsupported plugin');
   return p;
 }
+function reality(n: ProxyNode): Dict | undefined {
+  if (n['reality-opts'] === undefined) return undefined;
+  const options = record(n['reality-opts']);
+  if (
+    n.type !== 'vless' ||
+    n.tls !== true ||
+    !simple(options['public-key']) ||
+    Object.keys(options).some((key) => !['public-key', 'short-id'].includes(key))
+  )
+    throw new Error('Unsupported Reality options');
+  if (options['short-id'] !== undefined) simple(options['short-id']);
+  return options;
+}
 function checkNative(n: ProxyNode, target: Target): void {
   if (Object.keys(n).some((k) => !baseKeys.has(k))) throw new Error('Unsupported fields');
   if (!['ss', 'ssr', 'vmess', 'vless', 'trojan', 'http', 'socks5'].includes(n.type))
     throw new Error('Unsupported type');
-  if (target === 'quanx' && n.type === 'vless') throw new Error('Unsupported type');
   if (n.type === 'vmess' && Number(n.alterId ?? 0) !== 0) throw new Error('Legacy VMess');
   if (n.type === 'ss' && str(n.cipher).startsWith('2022-')) throw new Error('Unsupported SS2022');
   if (n.type !== 'ss' && (n.plugin || n['plugin-opts'])) throw new Error('Unexpected plugin');
@@ -110,10 +125,17 @@ function checkNative(n: ProxyNode, target: Target): void {
     throw new Error('Unsupported transport');
   if (n.type === 'ss' && n.tls === true) throw new Error('Unexpected TLS');
   plugin(n);
+  const realityOptions = reality(n);
+  if (n.flow !== undefined && (n.type !== 'vless' || n.flow !== 'xtls-rprx-vision'))
+    throw new Error('Unsupported VLESS flow');
+  // Loon and Quantumult X select their own TLS fingerprint for Reality.
+  if (n['client-fingerprint'] !== undefined && !realityOptions)
+    throw new Error('Unsupported client fingerprint');
 }
 
 function loon(n: ProxyNode): string {
   checkNative(n, 'loon');
+  const realityOptions = reality(n);
   if (n.plugin === 'v2ray-plugin') throw new Error('Unsupported plugin');
   const name = simple(n.name).replace(/=/g, '﹦');
   const type =
@@ -140,13 +162,19 @@ function loon(n: ProxyNode): string {
       if (n[key]) parts.push(`${key}=${simple(n[key])}`);
   if (['vmess', 'vless'].includes(n.type)) {
     parts.push(`transport=${t.network}`, `over-tls=${bool(n, 'tls')}`);
+    if (n.type === 'vless' && n.flow) parts.push(`flow=${simple(n.flow)}`);
     if (t.network === 'ws') {
       parts.push(`path=${t.path}`);
       if (t.host) parts.push(`host=${t.host}`);
     }
   }
+  if (realityOptions) {
+    parts.push(`public-key=${quoted(realityOptions['public-key'])}`);
+    if (realityOptions['short-id']) parts.push(`short-id=${simple(realityOptions['short-id'])}`);
+  }
   if (n.tls || n.type === 'trojan') {
-    if (n.servername || n.sni) parts.push(`tls-name=${simple(n.servername || n.sni)}`);
+    if (n.servername || n.sni)
+      parts.push(`${realityOptions ? 'sni' : 'tls-name'}=${simple(n.servername || n.sni)}`);
     parts.push(`skip-cert-verify=${bool(n, 'skip-cert-verify')}`);
   }
   if (n.type === 'socks5' && n.tls) throw new Error('Unsupported TLS');
@@ -160,12 +188,15 @@ function loon(n: ProxyNode): string {
 
 function quanx(n: ProxyNode): string {
   checkNative(n, 'quanx');
+  const realityOptions = reality(n);
   const host = n.server.includes(':') ? `[${n.server}]` : n.server;
   const parts = [
     `${['ss', 'ssr'].includes(n.type) ? 'shadowsocks' : n.type}=${simple(host)}:${n.port}`,
   ];
-  if (n.cipher) parts.push(`method=${simple(n.cipher)}`);
+  if (n.type === 'vless') parts.push('method=none');
+  else if (n.cipher) parts.push(`method=${simple(n.cipher)}`);
   if (n.type === 'vmess') parts.push(`password=${simple(n.uuid)}`, 'aead=true');
+  else if (n.type === 'vless') parts.push(`password=${simple(n.uuid)}`);
   else if (n.password) parts.push(`password=${simple(n.password)}`);
   if (n.username) parts.push(`username=${simple(n.username)}`);
   const p = plugin(n);
@@ -183,14 +214,25 @@ function quanx(n: ProxyNode): string {
     if (n['protocol-param']) parts.push(`ssr-protocol-param=${simple(n['protocol-param'])}`);
     if (n['obfs-param']) parts.push(`obfs-host=${simple(n['obfs-param'])}`);
   }
-  if (n.type === 'vmess') {
+  if (['vmess', 'vless'].includes(n.type)) {
     if (t.network === 'ws') {
       parts.push(`obfs=${n.tls ? 'wss' : 'ws'}`, `obfs-uri=${t.path}`);
       if (t.host) parts.push(`obfs-host=${t.host}`);
     } else if (n.tls) parts.push('obfs=over-tls');
+    if (n.type === 'vless') {
+      if (n.tls && (n.servername || n.sni) && !t.host)
+        parts.push(`obfs-host=${simple(n.servername || n.sni)}`);
+      if (realityOptions) {
+        parts.push(`reality-base64-pubkey=${simple(realityOptions['public-key'])}`);
+        if (realityOptions['short-id'])
+          parts.push(`reality-hex-shortid=${simple(realityOptions['short-id'])}`);
+      }
+      if (n.flow) parts.push(`vless-flow=${simple(n.flow)}`);
+      if (n.tls) parts.push(`tls-verification=${!bool(n, 'skip-cert-verify')}`);
+    }
   } else if (['trojan', 'http', 'socks5'].includes(n.type))
     parts.push(`over-tls=${bool(n, 'tls', n.type === 'trojan')}`);
-  if (n.tls || n.type === 'trojan' || p.tls) {
+  if ((n.tls || n.type === 'trojan' || p.tls) && n.type !== 'vless') {
     if (n.servername || n.sni) parts.push(`tls-host=${simple(n.servername || n.sni)}`);
     parts.push(`tls-verification=${!bool(n, 'skip-cert-verify')}`);
   }
