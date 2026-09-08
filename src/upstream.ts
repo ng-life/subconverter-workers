@@ -12,13 +12,6 @@ interface UpstreamResult {
   metadataError: { code: string; detail: string } | null;
 }
 
-interface UpstreamRequest {
-  url: URL;
-  init: RequestInit;
-  /** The request body contains credentials and must never be sent to a redirect target. */
-  hasSensitiveBody: boolean;
-}
-
 function nonNegativeNumber(value: unknown): number {
   const number =
     typeof value === 'number'
@@ -98,44 +91,6 @@ async function readBody(response: Response): Promise<{ body: string; bytes: numb
 }
 
 /**
- * KiwiVM may challenge GET requests from shared Cloudflare egress addresses.
- * Its service-info endpoint also accepts form POSTs, which return the regular
- * JSON payload and keep the API key out of the requested URL.
- */
-function upstreamRequest(provider: Provider, sourceUrl: URL): UpstreamRequest {
-  const url = new URL(sourceUrl);
-  const isKiwiVmServiceInfo =
-    provider.body !== undefined &&
-    url.hostname === 'api.64clouds.com' &&
-    url.pathname === '/v1/getServiceInfo';
-  const headers = { 'user-agent': 'subconverter-workers/1.0', ...provider.headers };
-
-  if (!isKiwiVmServiceInfo)
-    return {
-      url,
-      init: { headers, redirect: 'manual' },
-      hasSensitiveBody: false,
-    };
-
-  const form = new URLSearchParams(url.searchParams);
-  url.search = '';
-  return {
-    url,
-    init: {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/x-www-form-urlencoded',
-        ...headers,
-      },
-      body: form.toString(),
-      redirect: 'manual',
-    },
-    hasSensitiveBody: true,
-  };
-}
-
-/**
  * Fetch a bounded UTF-8 subscription from a public HTTPS origin.
  * Redirects are followed manually so authenticated headers never cross origins.
  */
@@ -146,19 +101,17 @@ export async function fetchSubscription(provider: Provider): Promise<UpstreamRes
   try {
     let url = upstreamUrl(provider.url);
     for (let redirects = 0; ; redirects++) {
-      const request = upstreamRequest(provider, url);
-      response = await fetch(request.url, { ...request.init, signal: controller.signal });
+      response = await fetch(url, {
+        headers: { 'user-agent': 'subconverter-workers/1.0', ...provider.headers },
+        redirect: 'manual',
+        signal: controller.signal,
+      });
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
       await response.body?.cancel();
       const location = response.headers.get('location');
       if (!location || redirects >= 3) throw new AppError(502, 'UPSTREAM_REDIRECT_ERROR');
       const next = upstreamUrl(new URL(location, url).href);
-      // Never replay KiwiVM form credentials to a redirect target, even on the
-      // same origin. The documented endpoint does not require redirects.
-      if (
-        request.hasSensitiveBody ||
-        (next.origin !== url.origin && Object.keys(provider.headers).length)
-      )
+      if (next.origin !== url.origin && Object.keys(provider.headers).length)
         throw new AppError(502, 'UPSTREAM_REDIRECT_ERROR');
       url = next;
     }
