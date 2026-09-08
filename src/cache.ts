@@ -62,7 +62,12 @@ export class SubscriptionCache extends DurableObject<Env> {
     const ttlMilliseconds = provider.cacheTtlSeconds * 1000;
     const hasModel = before.model !== null;
     const expired = !hasModel || now >= before.fetchedAt + ttlMilliseconds;
-    const retryAllowed = !before.attemptedAt || now >= before.attemptedAt + ttlMilliseconds;
+    // A static body can recover an object left empty by an earlier metadata
+    // failure immediately after deployment; it does not need to wait out TTL.
+    const retryAllowed =
+      (provider.body !== undefined && !hasModel) ||
+      !before.attemptedAt ||
+      now >= before.attemptedAt + ttlMilliseconds;
     let cacheStatus: CacheStatus = 'HIT';
 
     if (expired) {
@@ -145,6 +150,7 @@ export class SubscriptionCache extends DurableObject<Env> {
       'x-subscription-skipped': String(output.skipped),
     });
     if (state.userinfo !== null) headers.set('subscription-userinfo', state.userinfo);
+    if (state.error !== null) headers.set('x-subscription-warning', state.error);
 
     return new Response(output.body, { headers });
   }
@@ -219,6 +225,8 @@ export class SubscriptionCache extends DurableObject<Env> {
             const result = await fetchSubscription(provider);
             fetchSpan.setAttribute('subscription.upstream_bytes', result.upstreamBytes);
             fetchSpan.setAttribute('subscription.static_body', provider.body !== undefined);
+            if (result.metadataError)
+              fetchSpan.setAttribute('subscription.metadata.error_code', result.metadataError);
             return result;
           },
         );
@@ -237,10 +245,11 @@ export class SubscriptionCache extends DurableObject<Env> {
 
         this.ctx.storage.sql.exec(
           `UPDATE subscription_cache
-           SET fetched_at = ?, userinfo = ?, error = NULL, model = ?
+           SET fetched_at = ?, userinfo = ?, error = ?, model = ?
            WHERE id = 1`,
           Date.now(),
           upstream.userinfo,
+          upstream.metadataError,
           JSON.stringify(model),
         );
         span.setAttributes({
@@ -254,6 +263,11 @@ export class SubscriptionCache extends DurableObject<Env> {
           skippedCount: model.skipped,
           durationMs: Date.now() - startedAt,
         });
+        if (upstream.metadataError)
+          logEvent('warn', 'subscription.metadata.failed', {
+            provider: provider.name,
+            errorCode: upstream.metadataError,
+          });
       } catch (error) {
         const code = error instanceof AppError ? error.code : 'SUBSCRIPTION_REFRESH_FAILED';
         const metadata = errorMetadata(error);
