@@ -153,7 +153,10 @@ function uri(line: string): Dict {
       n['reality-opts'] = { 'public-key': q.get('pbk'), 'short-id': q.get('sid') || '' };
     else if (!['tls', 'none'].includes(q.get('security')!)) n['_unsupported'] = true;
   }
-  if (q.has('sni') || q.has('peer')) n.servername = q.get('sni') || q.get('peer');
+  // Some panels emit both the standard `sni` key and its `servername` alias.
+  // Prefer the standard key, but reject conflicting aliases to avoid changing the TLS target.
+  if (q.has('sni') || q.has('servername') || q.has('peer'))
+    n.servername = q.get('sni') || q.get('servername') || q.get('peer');
   if (q.has('allowInsecure') || q.has('insecure'))
     n['skip-cert-verify'] = bool(q.get('allowInsecure') ?? q.get('insecure'));
   if (q.has('alpn')) n.alpn = q.get('alpn')!.split(',');
@@ -169,6 +172,7 @@ function uri(line: string): Dict {
   const known = new Set([
     'security',
     'sni',
+    'servername',
     'peer',
     'allowInsecure',
     'insecure',
@@ -181,11 +185,19 @@ function uri(line: string): Dict {
     'serviceName',
     'pbk',
     'sid',
+    'spx',
+    'mode',
     'encryption',
   ]);
+  const serverNames = [q.get('sni'), q.get('servername'), q.get('peer')].filter(Boolean);
   if (
     [...q.keys()].some((k) => !known.has(k)) ||
     (q.has('encryption') && q.get('encryption') !== 'none') ||
+    // `multi` is a legacy gRPC export hint and does not change Mihomo's proxy schema.
+    (q.has('mode') && q.get('mode') !== 'multi') ||
+    // Mihomo has no spiderX field. Its default `/` value can be omitted without loss.
+    (q.has('spx') && !['', '/'].includes(q.get('spx')!)) ||
+    new Set(serverNames).size > 1 ||
     (u.pathname && u.pathname !== '/')
   )
     n['_unsupported'] = true;
