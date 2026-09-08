@@ -118,6 +118,43 @@ describe('subscription formats', () => {
     expect(() => serialize(parsed, 'loon')).toThrow('NO_COMPATIBLE_NODES');
   });
 
+  it('converts panel-style VLESS Reality links to Clash without losing supported fields', () => {
+    const source =
+      `vless://${uuid}@edge.example.com:443?` +
+      'mode=multi&security=reality&encryption=none&type=tcp&flow=xtls-rprx-vision&' +
+      'pbk=test-public-key&sid=deadbeef&sni=cover.example.com&' +
+      'servername=cover.example.com&spx=%2F&fp=chrome#Reality';
+    const parsed = parseSubscription(source, 'uri');
+    const proxy = parse(serialize(parsed, 'clash').body).proxies[0];
+
+    expect(parsed.nodes[0]._unsupported).toBeUndefined();
+    expect(proxy).toMatchObject({
+      name: 'Reality',
+      type: 'vless',
+      server: 'edge.example.com',
+      port: 443,
+      uuid,
+      network: 'tcp',
+      tls: true,
+      flow: 'xtls-rprx-vision',
+      servername: 'cover.example.com',
+      'client-fingerprint': 'chrome',
+      'reality-opts': { 'public-key': 'test-public-key', 'short-id': 'deadbeef' },
+    });
+  });
+
+  it.each([
+    'sni=one.example.com&servername=two.example.com',
+    'sni=one.example.com&spx=%2Fcustom',
+    'sni=one.example.com&mode=packet-up',
+  ])('rejects lossy VLESS Reality aliases or options: %s', (options) => {
+    const parsed = parseSubscription(
+      `vless://${uuid}@example.com:443?security=reality&pbk=test&sid=&${options}`,
+      'uri',
+    );
+    expect(() => serialize(parsed, 'clash')).toThrow('NO_COMPATIBLE_NODES');
+  });
+
   it('maps obfs plugins between SIP002, Loon, QuanX and SIP008', () => {
     const source = ss.replace(
       '#Hong%20Kong',
