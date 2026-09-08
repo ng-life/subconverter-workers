@@ -1,9 +1,10 @@
 import { env } from 'cloudflare:workers';
 import { reset, runInDurableObject } from 'cloudflare:test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Provider } from '../src/model';
 
 const provider: Provider = {
+  name: 'mysub',
   type: 'uri',
   url: 'https://upstream.example/sub',
   headers: {},
@@ -14,6 +15,12 @@ const provider: Provider = {
 function shadowsocks(name: string): string {
   return `ss://${btoa('aes-128-gcm:password')}@example.com:443#${name}`;
 }
+
+beforeEach(() => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
 
 afterEach(async () => {
   vi.restoreAllMocks();

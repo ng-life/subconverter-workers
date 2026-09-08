@@ -29,6 +29,7 @@ export interface Output {
 }
 
 export interface Provider {
+  name: string;
   type: InputType;
   url: string;
   headers: Record<string, string>;

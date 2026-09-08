@@ -29,6 +29,22 @@ https://sub.example.com/mysub/quanx?token=TOKEN
 
 Durable Object 只保存一份中间模型，不保存各目标格式的副本。
 
+## 日志与 Trace
+
+`wrangler.jsonc` 已开启持久化 Logs、Invocation Logs 和 Traces。业务代码使用结构化 JSON 日志，并通过 Cloudflare 原生 `tracing.enterSpan()` 记录以下自定义 Span：
+
+- `subscription.request`：完整请求处理。
+- `subscription.authenticate`：Token 校验。
+- `subscription.cache`：缓存判断、刷新及转换。
+- `subscription.cache.refresh`：完整缓存刷新。
+- `subscription.upstream.fetch`：上游订阅请求。
+- `subscription.parse`：上游格式转中间模型。
+- `subscription.serialize`：中间模型转目标格式。
+
+主要日志事件包括请求完成或失败、缓存刷新开始、刷新成功或失败，以及缓存模型或格式转换异常。日志只记录 Provider 名称、目标格式、状态、耗时和节点数量，不记录访问 Token、Provider 请求头、完整上游 URL 或订阅内容。
+
+当前日志和 Trace 的 `head_sampling_rate` 均为 `1`，即全量记录。流量增大后可以降低采样率控制存储量。
+
 ## Provider 配置
 
 `PROVIDERS` 可以配置为 JSON 文本绑定：

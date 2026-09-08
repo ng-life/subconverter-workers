@@ -328,6 +328,7 @@ function quanx(line: string): Dict {
   return n;
 }
 
+/** Normalize every supported provider format into the cacheable intermediate model. */
 export function parseSubscription(source: string, type: InputType): SubscriptionModel {
   try {
     let body = source.replace(/^\uFEFF/, '').trim();

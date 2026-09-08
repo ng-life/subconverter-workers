@@ -2,6 +2,11 @@ import { upstreamUrl } from './config';
 import { AppError, type Provider } from './model';
 
 export const MAX_UPSTREAM_BYTES = 1024 * 1024;
+
+/**
+ * Fetch a bounded UTF-8 subscription from a public HTTPS origin.
+ * Redirects are followed manually so authenticated headers never cross origins.
+ */
 export async function fetchSubscription(
   provider: Provider,
 ): Promise<{ body: string; userinfo: string | null }> {

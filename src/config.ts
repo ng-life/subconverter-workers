@@ -21,6 +21,7 @@ export function upstreamUrl(value: unknown): URL {
   return url;
 }
 
+/** Validate and normalize one named provider from a JSON or object binding. */
 export function getProvider(raw: unknown, name: string): Provider {
   try {
     const providers = record(typeof raw === 'string' ? JSON.parse(raw) : raw);
@@ -46,6 +47,7 @@ export function getProvider(raw: unknown, name: string): Provider {
       return v;
     };
     return {
+      name,
       type: type as InputType,
       url: upstreamUrl(p.url).href,
       headers: Object.fromEntries(Object.entries(headers).sort(([a], [b]) => a.localeCompare(b))),
@@ -59,6 +61,7 @@ export function getProvider(raw: unknown, name: string): Provider {
   }
 }
 
+/** Produce stable identities without exposing provider configuration or tokens. */
 export async function digest(value: string): Promise<string> {
   return Array.from(
     new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))),

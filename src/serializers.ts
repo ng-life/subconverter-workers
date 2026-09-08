@@ -244,6 +244,7 @@ function sip008(n: ProxyNode): Dict {
   return result;
 }
 
+/** Convert the intermediate model on demand, skipping nodes the target cannot represent. */
 export function serialize(model: SubscriptionModel, target: Target): Output {
   let skipped = model.skipped;
   const values: (Dict | string)[] = [];
