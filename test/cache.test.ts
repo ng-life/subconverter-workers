@@ -91,7 +91,9 @@ describe('intermediate model cache', () => {
     expect(result.status).toBe(200);
     expect(result.body).toContain('tag=Static');
     expect(result.cache).toBe('STALE');
-    expect(result.warning).toBe('UPSTREAM_SERVICE_ERROR');
+    expect(result.warning).toBe(
+      'UPSTREAM_SERVICE_ERROR; upstream_code=1; upstream_message=temporary%20service%20error',
+    );
     expect(result.userinfo).toBeNull();
   });
 
@@ -117,6 +119,28 @@ describe('intermediate model cache', () => {
     expect(result.status).toBe(200);
     expect(result.body).toContain('tag=Static');
     expect(result.warning).toBe('UPSTREAM_FETCH_FAILED');
+  });
+
+  it('reports a safe upstream HTTP status while serving static nodes', async () => {
+    const stub = env.SUBSCRIPTIONS.getByName('static-bandwagon-http-error');
+    const staticProvider: Provider = {
+      ...provider,
+      type: 'quanx',
+      url: 'https://api.example.com/service-info',
+      body: 'shadowsocks=example.com:443, method=aes-128-gcm, password=test, tag=Static',
+    };
+
+    const result = await runInDurableObject(stub, async (instance) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Forbidden', { status: 403 }));
+      const response = await instance.getSubscription(staticProvider, 'quanx');
+      return {
+        status: response.status,
+        warning: response.headers.get('x-subscription-warning'),
+      };
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.warning).toBe('UPSTREAM_HTTP_ERROR; status=403');
   });
 
   it('stores one normalized model and serializes formats on demand', async () => {

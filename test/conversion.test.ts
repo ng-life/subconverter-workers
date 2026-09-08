@@ -192,7 +192,16 @@ describe('subscription formats', () => {
         }),
       ),
     ).toBe('upload=0; download=200; total=2000; expire=1790169013');
-    expect(() => bandwagonUserinfo('{"error":1}')).toThrow('UPSTREAM_SERVICE_ERROR');
+    try {
+      bandwagonUserinfo('{"error":700005,"message":"Authentication failure"}');
+      throw new Error('Expected service error');
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: 'UPSTREAM_SERVICE_ERROR',
+        detail:
+          'UPSTREAM_SERVICE_ERROR; upstream_code=700005; upstream_message=Authentication%20failure',
+      });
+    }
     expect(() => bandwagonUserinfo('{}')).toThrow('UPSTREAM_SERVICE_ERROR');
     expect(() => bandwagonUserinfo('not json')).toThrow('INVALID_SERVICE_INFO');
   });

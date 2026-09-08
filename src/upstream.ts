@@ -7,8 +7,8 @@ interface UpstreamResult {
   body: string;
   userinfo: string | null;
   upstreamBytes: number;
-  /** Safe error code when optional service metadata could not be decoded. */
-  metadataError: string | null;
+  /** Safe error metadata when optional service information could not be decoded. */
+  metadataError: { code: string; detail: string } | null;
 }
 
 function nonNegativeNumber(value: unknown): number {
@@ -27,7 +27,12 @@ export function bandwagonUserinfo(body: string): string {
   try {
     const service = record(JSON.parse(body));
     if (service.error !== 0 && service.error !== '0')
-      throw new AppError(502, 'UPSTREAM_SERVICE_ERROR');
+      throw new AppError(
+        502,
+        'UPSTREAM_SERVICE_ERROR',
+        undefined,
+        serviceErrorDetail(service.error, service.message),
+      );
 
     const multiplier = nonNegativeNumber(service.monthly_data_multiplier);
     if (multiplier <= 0) throw new AppError(502, 'INVALID_SERVICE_INFO');
@@ -48,6 +53,22 @@ export function bandwagonUserinfo(body: string): string {
     if (error instanceof AppError) throw error;
     throw new AppError(502, 'INVALID_SERVICE_INFO');
   }
+}
+
+/** Build a header-safe error summary without reflecting arbitrary upstream text. */
+function serviceErrorDetail(error: unknown, message: unknown): string {
+  const parts = ['UPSTREAM_SERVICE_ERROR'];
+  const upstreamCode = String(error).trim();
+  if (/^[a-zA-Z0-9._-]{1,32}$/.test(upstreamCode))
+    parts.push(`upstream_code=${encodeURIComponent(upstreamCode)}`);
+  if (typeof message === 'string') {
+    const normalized = message
+      .replace(/[\x00-\x1f\x7f]+/g, ' ')
+      .trim()
+      .slice(0, 120);
+    if (normalized) parts.push(`upstream_message=${encodeURIComponent(normalized)}`);
+  }
+  return parts.join('; ');
 }
 
 async function readBody(response: Response): Promise<{ body: string; bytes: number }> {
@@ -99,7 +120,13 @@ export async function fetchSubscription(provider: Provider): Promise<UpstreamRes
         throw new AppError(502, 'UPSTREAM_REDIRECT_ERROR');
       url = next;
     }
-    if (!response.ok) throw new AppError(502, 'UPSTREAM_HTTP_ERROR');
+    if (!response.ok)
+      throw new AppError(
+        502,
+        'UPSTREAM_HTTP_ERROR',
+        undefined,
+        `UPSTREAM_HTTP_ERROR; status=${response.status}`,
+      );
     const upstream = await readBody(response);
     return provider.body === undefined
       ? {
@@ -123,7 +150,7 @@ export async function fetchSubscription(provider: Provider): Promise<UpstreamRes
         body: provider.body,
         userinfo: null,
         upstreamBytes: 0,
-        metadataError: error.code,
+        metadataError: { code: error.code, detail: error.detail ?? error.code },
       };
     throw error;
   } finally {
@@ -152,7 +179,10 @@ function staticSubscription(
       body,
       userinfo: null,
       upstreamBytes: upstream.bytes,
-      metadataError: error instanceof AppError ? error.code : 'INVALID_SERVICE_INFO',
+      metadataError:
+        error instanceof AppError
+          ? { code: error.code, detail: error.detail ?? error.code }
+          : { code: 'INVALID_SERVICE_INFO', detail: 'INVALID_SERVICE_INFO' },
     };
   }
 }

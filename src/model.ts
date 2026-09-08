@@ -43,6 +43,8 @@ export class AppError extends Error {
     public status: number,
     public code: string,
     public retryAfter?: number,
+    /** Optional bounded, sanitized diagnostic text safe for logs and headers. */
+    public detail?: string,
   ) {
     super(code);
   }
