@@ -1,8 +1,9 @@
-import { DurableObject } from 'cloudflare:workers';
+import { DurableObject, tracing } from 'cloudflare:workers';
 import { AppError, type Output, type Provider, type SubscriptionModel, type Target } from './model';
 import { parseSubscription } from './parsers';
 import { serialize } from './serializers';
 import { fetchSubscription } from './upstream';
+import { errorMetadata, logEvent } from './observability';
 
 type CacheStatus = 'HIT' | 'MISS' | 'REFRESH' | 'STALE';
 
@@ -40,6 +41,22 @@ export class SubscriptionCache extends DurableObject<Env> {
   }
 
   async getSubscription(provider: Provider, target: Target): Promise<Response> {
+    return tracing.enterSpan('subscription.cache', async (span) => {
+      span.setAttributes({
+        'subscription.provider': provider.name,
+        'subscription.format': target,
+      });
+      const response = await this.resolveSubscription(provider, target);
+      span.setAttributes({
+        'http.response.status_code': response.status,
+        'subscription.cache.status': response.headers.get('x-subscription-cache') ?? 'NONE',
+      });
+      return response;
+    });
+  }
+
+  /** Resolve freshness first, then serialize exactly one requested output format. */
+  private async resolveSubscription(provider: Provider, target: Target): Promise<Response> {
     const before = this.state();
     const now = Date.now();
     const ttlMilliseconds = provider.cacheTtlSeconds * 1000;
@@ -76,6 +93,7 @@ export class SubscriptionCache extends DurableObject<Env> {
       model = JSON.parse(state.model) as SubscriptionModel;
       if (model.schemaVersion !== 1 || !Array.isArray(model.nodes)) throw new Error();
     } catch {
+      logEvent('error', 'subscription.cache.invalid_model', { provider: provider.name });
       return Response.json(
         { error: 'INVALID_CACHE_MODEL' },
         { status: 500, headers: { 'cache-control': 'no-store' } },
@@ -86,10 +104,28 @@ export class SubscriptionCache extends DurableObject<Env> {
     // is always generated here, keeping the cache independent of serializers.
     let output: Output;
     try {
-      output = serialize(model, target);
+      output = tracing.enterSpan('subscription.serialize', (span) => {
+        span.setAttributes({
+          'subscription.provider': provider.name,
+          'subscription.format': target,
+          'subscription.input_node_count': model.nodes.length,
+        });
+        const value = serialize(model, target);
+        span.setAttributes({
+          'subscription.output_node_count': value.count,
+          'subscription.skipped_node_count': value.skipped,
+        });
+        return value;
+      });
     } catch (error) {
       const conversionError =
         error instanceof AppError ? error : new AppError(500, 'OUTPUT_CONVERSION_FAILED');
+      logEvent(conversionError.status >= 500 ? 'error' : 'warn', 'subscription.serialize.failed', {
+        provider: provider.name,
+        format: target,
+        status: conversionError.status,
+        errorCode: conversionError.code,
+      });
       return Response.json(
         { error: conversionError.code },
         { status: conversionError.status, headers: { 'cache-control': 'no-store' } },
@@ -151,28 +187,91 @@ export class SubscriptionCache extends DurableObject<Env> {
   }
 
   private async refresh(provider: Provider): Promise<void> {
-    this.ctx.storage.sql.exec(
-      'UPDATE subscription_cache SET attempted_at = ? WHERE id = 1',
-      Date.now(),
-    );
-    // SQL executes in memory first; sync makes the retry boundary durable before I/O.
-    await this.ctx.storage.sync();
-
-    try {
-      const upstream = await fetchSubscription(provider);
-      const model = parseSubscription(upstream.body, provider.type);
+    return tracing.enterSpan('subscription.cache.refresh', async (span) => {
+      const startedAt = Date.now();
+      span.setAttributes({
+        'subscription.provider': provider.name,
+        'subscription.input_format': provider.type,
+        'server.address': new URL(provider.url).hostname,
+      });
+      logEvent('info', 'subscription.cache.refresh.started', {
+        provider: provider.name,
+        inputFormat: provider.type,
+      });
 
       this.ctx.storage.sql.exec(
-        `UPDATE subscription_cache
-         SET fetched_at = ?, userinfo = ?, error = NULL, model = ?
-         WHERE id = 1`,
+        'UPDATE subscription_cache SET attempted_at = ? WHERE id = 1',
         Date.now(),
-        upstream.userinfo,
-        JSON.stringify(model),
       );
-    } catch (error) {
-      const code = error instanceof AppError ? error.code : 'SUBSCRIPTION_REFRESH_FAILED';
-      this.ctx.storage.sql.exec('UPDATE subscription_cache SET error = ? WHERE id = 1', code);
-    }
+      // SQL executes in memory first; sync makes the retry boundary durable before I/O.
+      await this.ctx.storage.sync();
+
+      try {
+        // The nested spans separate network time from parsing and storage time.
+        // Platform-created fetch and SQL spans become children automatically.
+        const upstream = await tracing.enterSpan(
+          'subscription.upstream.fetch',
+          async (fetchSpan) => {
+            fetchSpan.setAttributes({
+              'subscription.provider': provider.name,
+              'server.address': new URL(provider.url).hostname,
+            });
+            const result = await fetchSubscription(provider);
+            fetchSpan.setAttribute(
+              'subscription.upstream_bytes',
+              new TextEncoder().encode(result.body).byteLength,
+            );
+            return result;
+          },
+        );
+        const model = tracing.enterSpan('subscription.parse', (parseSpan) => {
+          parseSpan.setAttributes({
+            'subscription.provider': provider.name,
+            'subscription.input_format': provider.type,
+          });
+          const value = parseSubscription(upstream.body, provider.type);
+          parseSpan.setAttributes({
+            'subscription.node_count': value.nodes.length,
+            'subscription.skipped_node_count': value.skipped,
+          });
+          return value;
+        });
+
+        this.ctx.storage.sql.exec(
+          `UPDATE subscription_cache
+           SET fetched_at = ?, userinfo = ?, error = NULL, model = ?
+           WHERE id = 1`,
+          Date.now(),
+          upstream.userinfo,
+          JSON.stringify(model),
+        );
+        span.setAttributes({
+          'subscription.node_count': model.nodes.length,
+          'subscription.skipped_node_count': model.skipped,
+        });
+        logEvent('info', 'subscription.cache.refresh.completed', {
+          provider: provider.name,
+          inputFormat: provider.type,
+          nodeCount: model.nodes.length,
+          skippedCount: model.skipped,
+          durationMs: Date.now() - startedAt,
+        });
+      } catch (error) {
+        const code = error instanceof AppError ? error.code : 'SUBSCRIPTION_REFRESH_FAILED';
+        const metadata = errorMetadata(error);
+        span.setAttributes({
+          'subscription.error.code': code,
+          'subscription.error.name': metadata.errorName,
+        });
+        this.ctx.storage.sql.exec('UPDATE subscription_cache SET error = ? WHERE id = 1', code);
+        logEvent('error', 'subscription.cache.refresh.failed', {
+          provider: provider.name,
+          inputFormat: provider.type,
+          errorCode: code,
+          errorName: metadata.errorName,
+          durationMs: Date.now() - startedAt,
+        });
+      }
+    });
   }
 }
