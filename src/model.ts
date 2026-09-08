@@ -32,6 +32,8 @@ export interface Provider {
   name: string;
   type: InputType;
   url: string;
+  /** Optional static subscription text; when set, url supplies Bandwagon usage metadata only. */
+  body?: string;
   headers: Record<string, string>;
   cacheTtlSeconds: number;
   timeoutSeconds: number;

@@ -1,5 +1,7 @@
 import { AppError, inputTypes, record, type InputType, type Provider } from './model';
 
+const MAX_PROVIDER_BODY_BYTES = 1024 * 1024;
+
 export function upstreamUrl(value: unknown): URL {
   if (typeof value !== 'string') throw new Error('Invalid URL');
   const url = new URL(value);
@@ -29,6 +31,14 @@ export function getProvider(raw: unknown, name: string): Provider {
     const p = record(providers[name]);
     const type = p.type ?? 'auto';
     if (!inputTypes.includes(type as InputType)) throw new Error('Invalid input type');
+    let body: string | undefined;
+    if (p.body !== undefined) {
+      if (type !== 'quanx' || typeof p.body !== 'string' || !p.body.trim())
+        throw new Error('Invalid static subscription body');
+      if (new TextEncoder().encode(p.body).byteLength > MAX_PROVIDER_BODY_BYTES)
+        throw new Error('Static subscription body is too large');
+      body = p.body;
+    }
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(p.headers === undefined ? {} : record(p.headers))) {
       if (
@@ -50,6 +60,7 @@ export function getProvider(raw: unknown, name: string): Provider {
       name,
       type: type as InputType,
       url: upstreamUrl(p.url).href,
+      body,
       headers: Object.fromEntries(Object.entries(headers).sort(([a], [b]) => a.localeCompare(b))),
       // Keep accepting the original option so existing deployments do not break.
       cacheTtlSeconds: number(p.cacheTtlSeconds ?? p.minRefreshIntervalSeconds, 300, 604800),

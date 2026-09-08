@@ -28,6 +28,43 @@ afterEach(async () => {
 });
 
 describe('intermediate model cache', () => {
+  it('uses a static QuanX body and exposes Bandwagon traffic metadata', async () => {
+    const stub = env.SUBSCRIPTIONS.getByName('static-bandwagon');
+    const staticProvider: Provider = {
+      ...provider,
+      type: 'quanx',
+      url: 'https://api.example.com/service-info',
+      body:
+        'shadowsocks=example.com:443, method=aes-128-gcm, password=test, ' +
+        'server_check_url=http://test.example/generate_204, tag=Static',
+    };
+
+    const result = await runInDurableObject(stub, async (instance) => {
+      const upstream = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        Response.json({
+          error: 0,
+          data_counter: 100,
+          plan_monthly_data: 1000,
+          monthly_data_multiplier: 2,
+          data_next_reset: 1790169013,
+        }),
+      );
+      const response = await instance.getSubscription(staticProvider, 'quanx');
+      return {
+        body: await response.text(),
+        cache: response.headers.get('x-subscription-cache'),
+        userinfo: response.headers.get('subscription-userinfo'),
+        upstreamCalls: upstream.mock.calls.length,
+      };
+    });
+
+    expect(result.cache).toBe('MISS');
+    expect(result.body).toContain('tag=Static');
+    expect(result.body).toContain('server_check_url=http://test.example/generate_204');
+    expect(result.userinfo).toBe('upload=0; download=200; total=2000; expire=1790169013');
+    expect(result.upstreamCalls).toBe(1);
+  });
+
   it('stores one normalized model and serializes formats on demand', async () => {
     const stub = env.SUBSCRIPTIONS.getByName('model-cache');
 

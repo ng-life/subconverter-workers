@@ -4,6 +4,7 @@ import { decode64, parseSubscription } from '../src/parsers';
 import { serialize } from '../src/serializers';
 import { getProvider } from '../src/config';
 import { targets, type InputType } from '../src/model';
+import { bandwagonUserinfo } from '../src/upstream';
 
 const uuid = '52396e06-041a-4cc2-be5c-8525eb457809';
 const ss = `ss://${btoa('aes-128-gcm:p:a:ss')}@example.com:443#Hong%20Kong`;
@@ -149,6 +150,42 @@ describe('subscription formats', () => {
     }
   });
 
+  it('preserves the QuanX per-node check URL without breaking other targets', () => {
+    const source =
+      'shadowsocks=example.com:38388, method=chacha20-ietf-poly1305, password=test, ' +
+      'fast-open=false, udp-relay=true, server_check_url=http://test.example/generate_204, tag=SS';
+    const parsed = parseSubscription(source, 'quanx');
+    const quanx = serialize(parsed, 'quanx');
+    const clash = parse(serialize(parsed, 'clash').body);
+    const loon = serialize(parsed, 'loon');
+    const sip008 = serialize(parsed, 'shadowsocks');
+
+    expect(quanx.body).toContain('server_check_url=http://test.example/generate_204');
+    expect(parseSubscription(quanx.body, 'quanx').nodes[0]['server_check_url']).toBe(
+      'http://test.example/generate_204',
+    );
+    expect(clash.proxies[0]['server_check_url']).toBeUndefined();
+    expect(loon.body).not.toContain('server_check_url');
+    expect(sip008.count).toBe(1);
+  });
+
+  it('validates and converts Bandwagon service counters', () => {
+    expect(
+      bandwagonUserinfo(
+        JSON.stringify({
+          error: 0,
+          data_counter: 100,
+          plan_monthly_data: 1_000,
+          monthly_data_multiplier: 2,
+          data_next_reset: 1_790_169_013,
+        }),
+      ),
+    ).toBe('upload=0; download=200; total=2000; expire=1790169013');
+    expect(() => bandwagonUserinfo('{"error":1}')).toThrow('UPSTREAM_SERVICE_ERROR');
+    expect(() => bandwagonUserinfo('{}')).toThrow('UPSTREAM_SERVICE_ERROR');
+    expect(() => bandwagonUserinfo('not json')).toThrow('INVALID_SERVICE_INFO');
+  });
+
   it('converts panel-style VLESS Reality links to Clash without losing supported fields', () => {
     const source =
       `vless://${uuid}@edge.example.com:443?` +
@@ -229,6 +266,23 @@ describe('provider config', () => {
       getProvider({ mysub: { url: 'https://example.com/sub' } }, 'mysub').cacheTtlSeconds,
     ).toBe(300);
   });
+  it('accepts a static QuanX body with a separate service information URL', () => {
+    const provider = getProvider(
+      {
+        bandwagon: {
+          type: 'quanx',
+          url: 'https://api.example.com/service-info?token=secret',
+          body: 'shadowsocks=example.com:443, method=aes-128-gcm, password=test, tag=SS',
+        },
+      },
+      'bandwagon',
+    );
+    expect(provider).toMatchObject({
+      type: 'quanx',
+      url: 'https://api.example.com/service-info?token=secret',
+      body: 'shadowsocks=example.com:443, method=aes-128-gcm, password=test, tag=SS',
+    });
+  });
   it('accepts the legacy refresh interval as the cache TTL', () => {
     expect(
       getProvider(
@@ -255,5 +309,11 @@ describe('provider config', () => {
     expect(() =>
       getProvider({ a: { url: 'https://example.com', headers: { authorization: 'x\r\ny' } } }, 'a'),
     ).toThrow();
+    expect(() =>
+      getProvider({ a: { type: 'uri', url: 'https://example.com', body: 'ss://test' } }, 'a'),
+    ).toThrow('INVALID_PROVIDER_CONFIG');
+    expect(() =>
+      getProvider({ a: { type: 'quanx', url: 'https://example.com', body: '   ' } }, 'a'),
+    ).toThrow('INVALID_PROVIDER_CONFIG');
   });
 });
