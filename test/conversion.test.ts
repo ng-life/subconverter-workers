@@ -181,6 +181,17 @@ describe('subscription formats', () => {
         }),
       ),
     ).toBe('upload=0; download=200; total=2000; expire=1790169013');
+    expect(
+      bandwagonUserinfo(
+        JSON.stringify({
+          error: '0',
+          data_counter: '100',
+          plan_monthly_data: '1000',
+          monthly_data_multiplier: '2',
+          data_next_reset: '1790169013',
+        }),
+      ),
+    ).toBe('upload=0; download=200; total=2000; expire=1790169013');
     expect(() => bandwagonUserinfo('{"error":1}')).toThrow('UPSTREAM_SERVICE_ERROR');
     expect(() => bandwagonUserinfo('{}')).toThrow('UPSTREAM_SERVICE_ERROR');
     expect(() => bandwagonUserinfo('not json')).toThrow('INVALID_SERVICE_INFO');

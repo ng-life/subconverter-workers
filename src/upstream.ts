@@ -7,19 +7,27 @@ interface UpstreamResult {
   body: string;
   userinfo: string | null;
   upstreamBytes: number;
+  /** Safe error code when optional service metadata could not be decoded. */
+  metadataError: string | null;
 }
 
 function nonNegativeNumber(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
-    throw new AppError(502, 'INVALID_SERVICE_INFO');
-  return value;
+  const number =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isFinite(number) || number < 0) throw new AppError(502, 'INVALID_SERVICE_INFO');
+  return number;
 }
 
 /** Convert KiwiVM billing counters to the subscription metadata understood by clients. */
 export function bandwagonUserinfo(body: string): string {
   try {
     const service = record(JSON.parse(body));
-    if (service.error !== 0) throw new AppError(502, 'UPSTREAM_SERVICE_ERROR');
+    if (service.error !== 0 && service.error !== '0')
+      throw new AppError(502, 'UPSTREAM_SERVICE_ERROR');
 
     const multiplier = nonNegativeNumber(service.monthly_data_multiplier);
     if (multiplier <= 0) throw new AppError(502, 'INVALID_SERVICE_INFO');
@@ -98,20 +106,53 @@ export async function fetchSubscription(provider: Provider): Promise<UpstreamRes
           body: upstream.body,
           userinfo: response.headers.get('subscription-userinfo'),
           upstreamBytes: upstream.bytes,
+          metadataError: null,
         }
-      : {
-          body: provider.body,
-          userinfo: bandwagonUserinfo(upstream.body),
-          upstreamBytes: upstream.bytes,
-        };
+      : staticSubscription(provider.body, upstream);
   } catch (e) {
-    if (e instanceof AppError) throw e;
-    throw new AppError(
-      502,
-      controller.signal.aborted ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_FETCH_FAILED',
-    );
+    const error =
+      e instanceof AppError
+        ? e
+        : new AppError(
+            502,
+            controller.signal.aborted ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_FETCH_FAILED',
+          );
+    // Static node availability does not depend on the optional metadata origin.
+    if (provider.body !== undefined)
+      return {
+        body: provider.body,
+        userinfo: null,
+        upstreamBytes: 0,
+        metadataError: error.code,
+      };
+    throw error;
   } finally {
     clearTimeout(timer);
     if (response?.body && !response.body.locked) await response.body.cancel().catch(() => {});
+  }
+}
+
+/**
+ * Service metadata is optional for a static provider. A temporary KiwiVM
+ * business error must not make otherwise valid proxy nodes unavailable.
+ */
+function staticSubscription(
+  body: string,
+  upstream: { body: string; bytes: number },
+): UpstreamResult {
+  try {
+    return {
+      body,
+      userinfo: bandwagonUserinfo(upstream.body),
+      upstreamBytes: upstream.bytes,
+      metadataError: null,
+    };
+  } catch (error) {
+    return {
+      body,
+      userinfo: null,
+      upstreamBytes: upstream.bytes,
+      metadataError: error instanceof AppError ? error.code : 'INVALID_SERVICE_INFO',
+    };
   }
 }

@@ -65,6 +65,60 @@ describe('intermediate model cache', () => {
     expect(result.upstreamCalls).toBe(1);
   });
 
+  it('serves static nodes when Bandwagon traffic metadata is temporarily unavailable', async () => {
+    const stub = env.SUBSCRIPTIONS.getByName('static-bandwagon-degraded');
+    const staticProvider: Provider = {
+      ...provider,
+      type: 'quanx',
+      url: 'https://api.example.com/service-info',
+      body: 'shadowsocks=example.com:443, method=aes-128-gcm, password=test, tag=Static',
+    };
+
+    const result = await runInDurableObject(stub, async (instance) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        Response.json({ error: 1, message: 'temporary service error' }),
+      );
+      const response = await instance.getSubscription(staticProvider, 'quanx');
+      return {
+        status: response.status,
+        body: await response.text(),
+        cache: response.headers.get('x-subscription-cache'),
+        warning: response.headers.get('x-subscription-warning'),
+        userinfo: response.headers.get('subscription-userinfo'),
+      };
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body).toContain('tag=Static');
+    expect(result.cache).toBe('STALE');
+    expect(result.warning).toBe('UPSTREAM_SERVICE_ERROR');
+    expect(result.userinfo).toBeNull();
+  });
+
+  it('serves static nodes when the Bandwagon endpoint cannot be reached', async () => {
+    const stub = env.SUBSCRIPTIONS.getByName('static-bandwagon-network-error');
+    const staticProvider: Provider = {
+      ...provider,
+      type: 'quanx',
+      url: 'https://api.example.com/service-info',
+      body: 'shadowsocks=example.com:443, method=aes-128-gcm, password=test, tag=Static',
+    };
+
+    const result = await runInDurableObject(stub, async (instance) => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network unavailable'));
+      const response = await instance.getSubscription(staticProvider, 'quanx');
+      return {
+        status: response.status,
+        body: await response.text(),
+        warning: response.headers.get('x-subscription-warning'),
+      };
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body).toContain('tag=Static');
+    expect(result.warning).toBe('UPSTREAM_FETCH_FAILED');
+  });
+
   it('stores one normalized model and serializes formats on demand', async () => {
     const stub = env.SUBSCRIPTIONS.getByName('model-cache');
 
