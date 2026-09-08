@@ -88,6 +88,7 @@ Durable Object 只保存一份中间模型，不保存各目标格式的副本�
 
 - `body` 是静态 QuanX 节点正文，多条节点必须用换行分隔。
 - Worker 请求 `url`，使用 `data_counter`、`plan_monthly_data` 和 `monthly_data_multiplier` 生成 `Subscription-Userinfo`。
+- 对 `api.64clouds.com/v1/getServiceInfo`，Worker 会自动把 URL 参数改用表单 POST 提交，避免 Cloudflare 出口的 GET 请求收到 token challenge；其他上游仍使用 GET。
 - `data_next_reset` 会写入 `expire`，表示下次流量重置时间，并非 VPS 服务到期时间。
 - `url` 中包含管理 API Key，生产环境必须使用 `wrangler secret put PROVIDERS`，不要写入 `wrangler.jsonc` 或提交到仓库。
 
