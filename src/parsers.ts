@@ -42,6 +42,7 @@ function common(n: Dict, o: Dict, native: 'loon' | 'quanx'): void {
     native === 'loon'
       ? {
           'tls-name': 'servername',
+          sni: 'servername',
           'skip-cert-verify': 'skip-cert-verify',
           udp: 'udp',
           'fast-open': 'tfo',
@@ -255,8 +256,17 @@ function loon(line: string): Dict {
     for (const k of ['protocol', 'protocol-param', 'obfs', 'obfs-param'])
       if (o[k] !== undefined) n[k] = o[k];
   if (type === 'vmess') n.alterId = Number(o['alterId'] || 0);
+  if (type === 'vless') {
+    if (o.flow) n.flow = o.flow;
+    if (o['public-key'])
+      n['reality-opts'] = {
+        'public-key': o['public-key'],
+        'short-id': o['short-id'] || '',
+      };
+  }
   const known = new Set([
     'tls-name',
+    'sni',
     'skip-cert-verify',
     'udp',
     'fast-open',
@@ -271,7 +281,11 @@ function loon(line: string): Dict {
     'obfs',
     'obfs-param',
     'alterId',
+    'flow',
+    'public-key',
+    'short-id',
   ]);
+  if (o['tls-name'] && o.sni && o['tls-name'] !== o.sni) n['_unsupported'] = true;
   if (Object.keys(o).some((k) => !known.has(k))) n['_unsupported'] = true;
   return n;
 }
@@ -285,10 +299,13 @@ function quanx(line: string): Dict {
     ...endpoint(address),
     name: o.tag,
   };
+  if (kind === 'vmess' || kind === 'vless') n.network = 'tcp';
   if (o.method) n.cipher = o.method;
   if (kind === 'vmess') {
     n.uuid = o.password;
     n.alterId = o['aead'] === 'false' ? 1 : 0;
+  } else if (kind === 'vless') {
+    n.uuid = o.password;
   } else if (o.password) n.password = o.password;
   if (o.username) n.username = o.username;
   common(n, o, 'quanx');
@@ -319,6 +336,17 @@ function quanx(line: string): Dict {
     n['plugin-opts'] = { mode: o.obfs, host: o['obfs-host'] || '' };
   } else if (o.obfs === 'over-tls') n.tls = true;
   else if (o.obfs) n['_unsupported'] = true;
+  if (n.type === 'vless') {
+    if (o['obfs-host']) n.servername = o['obfs-host'];
+    if (o['vless-flow']) n.flow = o['vless-flow'];
+    if (o['reality-base64-pubkey']) {
+      n.tls = true;
+      n['reality-opts'] = {
+        'public-key': o['reality-base64-pubkey'],
+        'short-id': o['reality-hex-shortid'] || '',
+      };
+    }
+  }
   const known = new Set([
     'tag',
     'method',
@@ -335,6 +363,9 @@ function quanx(line: string): Dict {
     'obfs-uri',
     'ssr-protocol',
     'ssr-protocol-param',
+    'reality-base64-pubkey',
+    'reality-hex-shortid',
+    'vless-flow',
   ]);
   if (Object.keys(o).some((k) => !known.has(k))) n['_unsupported'] = true;
   return n;
@@ -354,7 +385,7 @@ export function parseSubscription(source: string, type: InputType): Subscription
         type = !Array.isArray(doc) && Object.hasOwn(record(doc), 'proxies') ? 'clash' : 'sip008';
       } else if (/^\s*proxies\s*:/m.test(body)) type = 'clash';
       else if (/^[\w+-]+:\/\//m.test(body)) type = 'uri';
-      else if (/^(shadowsocks|vmess|trojan|http|socks5)\s*=/m.test(body)) type = 'quanx';
+      else if (/^(shadowsocks|vmess|vless|trojan|http|socks5)\s*=/m.test(body)) type = 'quanx';
       else if (
         /^\[|^.+?\s*=\s*(Shadowsocks|ShadowsocksR|vmess|vless|trojan|http|https|socks5),/im.test(
           body,

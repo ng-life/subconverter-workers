@@ -107,7 +107,7 @@ describe('subscription formats', () => {
     expect(parsed.nodes.map((n) => n.name)).toEqual(['Hong Kong', 'Hong Kong (2)', 'Trojan']);
   });
 
-  it('keeps advanced Clash fields and refuses lossy native conversion', () => {
+  it('keeps advanced Clash fields', () => {
     const parsed = parseSubscription(
       `proxies:\n - {name: reality, type: vless, server: example.com, port: 443, uuid: ${uuid}, tls: true, reality-opts: {public-key: test}, client-fingerprint: chrome}`,
       'clash',
@@ -115,7 +115,38 @@ describe('subscription formats', () => {
     expect(parse(serialize(parsed, 'clash').body).proxies[0]['reality-opts']).toEqual({
       'public-key': 'test',
     });
-    expect(() => serialize(parsed, 'loon')).toThrow('NO_COMPATIBLE_NODES');
+  });
+
+  it.each(['loon', 'quanx'] as const)('roundtrips VLESS Reality through %s', (target) => {
+    const source =
+      `vless://${uuid}@edge.example.com:443?` +
+      'security=reality&type=tcp&flow=xtls-rprx-vision&fp=chrome&' +
+      'pbk=test-public-key&sid=deadbeef&sni=cover.example.com#Reality';
+    const output = serialize(parseSubscription(source, 'uri'), target);
+    const again = parseSubscription(output.body, target);
+
+    expect(output.count).toBe(1);
+    expect(output.skipped).toBe(0);
+    expect(again.nodes[0]).toMatchObject({
+      type: 'vless',
+      uuid,
+      network: 'tcp',
+      tls: true,
+      flow: 'xtls-rprx-vision',
+      servername: 'cover.example.com',
+      'reality-opts': { 'public-key': 'test-public-key', 'short-id': 'deadbeef' },
+    });
+    if (target === 'loon') {
+      expect(output.body).toContain('flow=xtls-rprx-vision');
+      expect(output.body).toContain('public-key="test-public-key"');
+      expect(output.body).toContain('short-id=deadbeef');
+      expect(output.body).toContain('sni=cover.example.com');
+    } else {
+      expect(output.body).toContain('method=none');
+      expect(output.body).toContain('reality-base64-pubkey=test-public-key');
+      expect(output.body).toContain('reality-hex-shortid=deadbeef');
+      expect(output.body).toContain('vless-flow=xtls-rprx-vision');
+    }
   });
 
   it('converts panel-style VLESS Reality links to Clash without losing supported fields', () => {
