@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import worker, { parseRoute } from '../src/index';
+import worker, { forceRefresh, parseRoute } from '../src/index';
 import type { Provider, Target } from '../src/model';
 
 function createEnv() {
@@ -52,6 +52,31 @@ describe('request routing', () => {
     expect(getSubscription).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'uri', cacheTtlSeconds: 300 }),
       'quanx',
+      false,
+    );
+  });
+
+  it('passes an explicit force-refresh request to the provider cache', async () => {
+    const { env, getSubscription } = createEnv();
+    const response = await worker.fetch(
+      new Request('https://worker.example/mysub/quanx?token=test-token&refresh=true'),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(getSubscription).toHaveBeenCalledWith(expect.anything(), 'quanx', true);
+  });
+
+  it('validates refresh parameter values', () => {
+    expect(forceRefresh(new URL('https://worker.example/sub?refresh=1'))).toBe(true);
+    expect(forceRefresh(new URL('https://worker.example/sub?refresh=true'))).toBe(true);
+    expect(forceRefresh(new URL('https://worker.example/sub?refresh=0'))).toBe(false);
+    expect(forceRefresh(new URL('https://worker.example/sub?refresh=false'))).toBe(false);
+    expect(() => forceRefresh(new URL('https://worker.example/sub?refresh=yes'))).toThrow(
+      'INVALID_REFRESH_PARAMETER',
+    );
+    expect(() => forceRefresh(new URL('https://worker.example/sub?refresh=1&refresh=1'))).toThrow(
+      'INVALID_REFRESH_PARAMETER',
     );
   });
 

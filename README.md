@@ -11,12 +11,14 @@ https://host/providerName/format?token=TOKEN
 - `providerName`：`PROVIDERS` 配置中的 Provider 名称。
 - `format`：`clash`、`loon`、`quanx` 或 `shadowsocks`。
 - `token`：必须与 Worker Secret `TOKEN` 一致。
+- `refresh`：可选；设置为 `true` 或 `1` 时忽略 TTL 并强制刷新缓存。
 
 例如：
 
 ```text
 https://sub.example.com/mysub/clash?token=TOKEN
 https://sub.example.com/mysub/quanx?token=TOKEN
+https://sub.example.com/mysub/quanx?token=TOKEN&refresh=true
 ```
 
 ## 缓存流程
@@ -26,6 +28,7 @@ https://sub.example.com/mysub/quanx?token=TOKEN
 3. 缓存未过期时，直接读取中间模型并转换为请求的目标格式。
 4. 缓存过期时，等待上游刷新完成，再用最新中间模型生成目标格式。
 5. 刷新失败且存在旧模型时返回旧数据，并通过 `x-subscription-cache: STALE` 标记；没有旧模型时返回错误。
+6. 请求带 `refresh=true` 或 `refresh=1` 时，即使缓存未过期也会等待强制刷新完成。
 
 Durable Object 只保存一份中间模型，不保存各目标格式的副本。
 

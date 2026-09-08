@@ -175,6 +175,29 @@ describe('intermediate model cache', () => {
     expect(result.upstreamCalls).toBe(2);
   });
 
+  it('force-refreshes a fresh model before converting the response', async () => {
+    const stub = env.SUBSCRIPTIONS.getByName('forced-refresh');
+
+    const result = await runInDurableObject(stub, async (instance) => {
+      const upstream = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(shadowsocks('Old')))
+        .mockResolvedValueOnce(new Response(shadowsocks('Forced')));
+      await instance.getSubscription(provider, 'clash');
+      const refreshed = await instance.getSubscription(provider, 'quanx', true);
+
+      return {
+        cache: refreshed.headers.get('x-subscription-cache'),
+        body: await refreshed.text(),
+        upstreamCalls: upstream.mock.calls.length,
+      };
+    });
+
+    expect(result.cache).toBe('REFRESH');
+    expect(result.body).toContain('tag=Forced');
+    expect(result.upstreamCalls).toBe(2);
+  });
+
   it('serves the last model as stale when an expired refresh fails', async () => {
     const stub = env.SUBSCRIPTIONS.getByName('stale-cache');
 

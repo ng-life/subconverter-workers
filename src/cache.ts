@@ -40,13 +40,18 @@ export class SubscriptionCache extends DurableObject<Env> {
     `);
   }
 
-  async getSubscription(provider: Provider, target: Target): Promise<Response> {
+  async getSubscription(
+    provider: Provider,
+    target: Target,
+    forceRefresh = false,
+  ): Promise<Response> {
     return tracing.enterSpan('subscription.cache', async (span) => {
       span.setAttributes({
         'subscription.provider': provider.name,
         'subscription.format': target,
+        'subscription.cache.force_refresh': forceRefresh,
       });
-      const response = await this.resolveSubscription(provider, target);
+      const response = await this.resolveSubscription(provider, target, forceRefresh);
       span.setAttributes({
         'http.response.status_code': response.status,
         'subscription.cache.status': response.headers.get('x-subscription-cache') ?? 'NONE',
@@ -56,12 +61,16 @@ export class SubscriptionCache extends DurableObject<Env> {
   }
 
   /** Resolve freshness first, then serialize exactly one requested output format. */
-  private async resolveSubscription(provider: Provider, target: Target): Promise<Response> {
+  private async resolveSubscription(
+    provider: Provider,
+    target: Target,
+    forceRefresh: boolean,
+  ): Promise<Response> {
     const before = this.state();
     const now = Date.now();
     const ttlMilliseconds = provider.cacheTtlSeconds * 1000;
     const hasModel = before.model !== null;
-    const expired = !hasModel || now >= before.fetchedAt + ttlMilliseconds;
+    const expired = forceRefresh || !hasModel || now >= before.fetchedAt + ttlMilliseconds;
     // A static body can recover an object left empty by an earlier metadata
     // failure immediately after deployment; it does not need to wait out TTL.
     const retryAllowed =
@@ -76,7 +85,7 @@ export class SubscriptionCache extends DurableObject<Env> {
       if (this.inFlight) {
         // Expired concurrent requests wait for one refresh before serialization.
         await this.inFlight;
-      } else if (retryAllowed) {
+      } else if (forceRefresh || retryAllowed) {
         this.inFlight = this.refresh(provider);
         try {
           await this.inFlight;
