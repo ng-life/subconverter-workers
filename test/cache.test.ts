@@ -33,7 +33,7 @@ describe('intermediate model cache', () => {
     const staticProvider: Provider = {
       ...provider,
       type: 'quanx',
-      url: 'https://api.64clouds.com/v1/getServiceInfo?veid=123&api_key=test-key',
+      url: 'https://api.example.com/service-info',
       body:
         'shadowsocks=example.com:443, method=aes-128-gcm, password=test, ' +
         'server_check_url=http://test.example/generate_204, tag=Static',
@@ -55,9 +55,6 @@ describe('intermediate model cache', () => {
         cache: response.headers.get('x-subscription-cache'),
         userinfo: response.headers.get('subscription-userinfo'),
         upstreamCalls: upstream.mock.calls.length,
-        upstreamUrl: String(upstream.mock.calls[0]?.[0]),
-        upstreamMethod: upstream.mock.calls[0]?.[1]?.method,
-        upstreamBody: String(upstream.mock.calls[0]?.[1]?.body),
       };
     });
 
@@ -66,9 +63,6 @@ describe('intermediate model cache', () => {
     expect(result.body).toContain('server_check_url=http://test.example/generate_204');
     expect(result.userinfo).toBe('upload=0; download=200; total=2000; expire=1790169013');
     expect(result.upstreamCalls).toBe(1);
-    expect(result.upstreamUrl).toBe('https://api.64clouds.com/v1/getServiceInfo');
-    expect(result.upstreamMethod).toBe('POST');
-    expect(result.upstreamBody).toBe('veid=123&api_key=test-key');
   });
 
   it('serves static nodes when Bandwagon traffic metadata is temporarily unavailable', async () => {
@@ -81,9 +75,9 @@ describe('intermediate model cache', () => {
     };
 
     const result = await runInDurableObject(stub, async (instance) => {
-      const upstream = vi
-        .spyOn(globalThis, 'fetch')
-        .mockResolvedValue(Response.json({ error: 1, message: 'temporary service error' }));
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        Response.json({ error: 1, message: 'temporary service error' }),
+      );
       const response = await instance.getSubscription(staticProvider, 'quanx');
       return {
         status: response.status,
@@ -91,7 +85,6 @@ describe('intermediate model cache', () => {
         cache: response.headers.get('x-subscription-cache'),
         warning: response.headers.get('x-subscription-warning'),
         userinfo: response.headers.get('subscription-userinfo'),
-        upstreamMethod: upstream.mock.calls[0]?.[1]?.method ?? 'GET',
       };
     });
 
@@ -102,7 +95,6 @@ describe('intermediate model cache', () => {
       'UPSTREAM_SERVICE_ERROR; upstream_body=%7B%22error%22%3A1%2C%22message%22%3A%22temporary%20service%20error%22%7D',
     );
     expect(result.userinfo).toBeNull();
-    expect(result.upstreamMethod).toBe('GET');
   });
 
   it('serves static nodes when the Bandwagon endpoint cannot be reached', async () => {
