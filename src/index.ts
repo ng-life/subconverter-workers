@@ -34,6 +34,16 @@ async function authenticate(url: URL, configuredToken: unknown): Promise<void> {
     throw new AppError(401, 'UNAUTHORIZED');
 }
 
+/** Parse the optional cache refresh switch without accepting ambiguous values. */
+export function forceRefresh(url: URL): boolean {
+  const values = url.searchParams.getAll('refresh');
+  if (!values.length) return false;
+  if (values.length !== 1) throw new AppError(400, 'INVALID_REFRESH_PARAMETER');
+  if (['1', 'true'].includes(values[0].toLowerCase())) return true;
+  if (['0', 'false'].includes(values[0].toLowerCase())) return false;
+  throw new AppError(400, 'INVALID_REFRESH_PARAMETER');
+}
+
 function errorResponse(error: AppError): Response {
   const headers: Record<string, string> = {
     'cache-control': 'no-store',
@@ -70,6 +80,8 @@ export default {
         await tracing.enterSpan('subscription.authenticate', () =>
           authenticate(url, runtime.TOKEN),
         );
+        const refresh = forceRefresh(url);
+        span.setAttribute('subscription.cache.force_refresh', refresh);
 
         const provider = getProvider(runtime.PROVIDERS, providerName);
         // Provider configuration is part of the identity so a config change gets
@@ -82,6 +94,7 @@ export default {
         const response = await env.SUBSCRIPTIONS.getByName(identity).getSubscription(
           provider,
           target,
+          refresh,
         );
         response.headers.set('x-content-type-options', 'nosniff');
 
@@ -97,6 +110,7 @@ export default {
           cacheStatus,
           nodeCount: response.headers.get('x-subscription-node-count'),
           skippedCount: response.headers.get('x-subscription-skipped'),
+          forceRefresh: refresh,
           durationMs: Date.now() - startedAt,
         });
 
