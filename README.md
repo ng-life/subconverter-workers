@@ -30,7 +30,7 @@ https://sub.example.com/mysub/quanx?token=TOKEN&refresh=true
 5. 刷新失败且存在旧模型时返回旧数据，并通过 `x-subscription-cache: STALE` 标记；没有旧模型时返回错误。
 6. 请求带 `refresh=true` 或 `refresh=1` 时，即使缓存未过期也会等待强制刷新完成。
 
-静态 Provider 的服务信息请求失败时，节点仍会正常返回，并通过 `x-subscription-warning` 提供经过清理的诊断信息。例如，HTTP 拒绝为 `UPSTREAM_HTTP_ERROR; status=403`，KiwiVM 业务错误则包含受限长度的 `upstream_code` 和百分号编码的 `upstream_message`。响应不会包含完整上游 URL、API Key 或上游正文。
+静态 Provider 的服务信息请求失败时，节点仍会正常返回，并通过 `x-subscription-warning` 提供诊断信息。有响应正文时，完整正文会放在百分号编码的 `upstream_body` 中；响应正文为空时则返回 HTTP `status`。为避免超过响应头限制，超过 4096 字节的错误正文只返回字节数。错误正文不会写入日志或 Trace，也不会包含 Provider 中的完整 URL 或 API Key。
 
 Durable Object 只保存一份中间模型，不保存各目标格式的副本。
 

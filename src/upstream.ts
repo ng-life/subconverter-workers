@@ -2,6 +2,7 @@ import { upstreamUrl } from './config';
 import { AppError, record, type Provider } from './model';
 
 export const MAX_UPSTREAM_BYTES = 1024 * 1024;
+const MAX_WARNING_BODY_BYTES = 4096;
 
 interface UpstreamResult {
   body: string;
@@ -27,12 +28,7 @@ export function bandwagonUserinfo(body: string): string {
   try {
     const service = record(JSON.parse(body));
     if (service.error !== 0 && service.error !== '0')
-      throw new AppError(
-        502,
-        'UPSTREAM_SERVICE_ERROR',
-        undefined,
-        serviceErrorDetail(service.error, service.message),
-      );
+      throw new AppError(502, 'UPSTREAM_SERVICE_ERROR');
 
     const multiplier = nonNegativeNumber(service.monthly_data_multiplier);
     if (multiplier <= 0) throw new AppError(502, 'INVALID_SERVICE_INFO');
@@ -55,26 +51,25 @@ export function bandwagonUserinfo(body: string): string {
   }
 }
 
-/** Build a header-safe error summary without reflecting arbitrary upstream text. */
-function serviceErrorDetail(error: unknown, message: unknown): string {
-  const parts = ['UPSTREAM_SERVICE_ERROR'];
-  const upstreamCode = String(error).trim();
-  if (/^[a-zA-Z0-9._-]{1,32}$/.test(upstreamCode))
-    parts.push(`upstream_code=${encodeURIComponent(upstreamCode)}`);
-  if (typeof message === 'string') {
-    const normalized = message
-      .replace(/[\x00-\x1f\x7f]+/g, ' ')
-      .trim()
-      .slice(0, 120);
-    if (normalized) parts.push(`upstream_message=${encodeURIComponent(normalized)}`);
-  }
-  return parts.join('; ');
+/** Encode the complete bounded error body so it is legal inside a response header. */
+function upstreamWarning(code: string, body: string, status: number): string {
+  const bytes = new TextEncoder().encode(body).byteLength;
+  if (!bytes) return `${code}; status=${status}`;
+  if (bytes > MAX_WARNING_BODY_BYTES)
+    return `${code}; status=${status}; upstream_body_omitted=too_large; upstream_body_bytes=${bytes}`;
+  return `${code}; upstream_body=${encodeURIComponent(body)}`;
 }
 
 async function readBody(response: Response): Promise<{ body: string; bytes: number }> {
   if (Number(response.headers.get('content-length')) > MAX_UPSTREAM_BYTES)
     throw new AppError(502, 'UPSTREAM_TOO_LARGE');
-  if (!response.body) throw new AppError(502, 'EMPTY_SUBSCRIPTION');
+  if (!response.body)
+    throw new AppError(
+      502,
+      'EMPTY_SUBSCRIPTION',
+      undefined,
+      `EMPTY_SUBSCRIPTION; status=${response.status}`,
+    );
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
   let bytes = 0;
@@ -120,7 +115,7 @@ export async function fetchSubscription(provider: Provider): Promise<UpstreamRes
         throw new AppError(502, 'UPSTREAM_REDIRECT_ERROR');
       url = next;
     }
-    if (!response.ok)
+    if (!response.body && !response.ok)
       throw new AppError(
         502,
         'UPSTREAM_HTTP_ERROR',
@@ -128,6 +123,15 @@ export async function fetchSubscription(provider: Provider): Promise<UpstreamRes
         `UPSTREAM_HTTP_ERROR; status=${response.status}`,
       );
     const upstream = await readBody(response);
+    if (!response.ok)
+      throw new AppError(
+        502,
+        'UPSTREAM_HTTP_ERROR',
+        undefined,
+        upstreamWarning('UPSTREAM_HTTP_ERROR', upstream.body, response.status),
+      );
+    if (provider.body === undefined && !upstream.body)
+      throw new AppError(502, 'EMPTY_SUBSCRIPTION');
     return provider.body === undefined
       ? {
           body: upstream.body,
@@ -135,7 +139,7 @@ export async function fetchSubscription(provider: Provider): Promise<UpstreamRes
           upstreamBytes: upstream.bytes,
           metadataError: null,
         }
-      : staticSubscription(provider.body, upstream);
+      : staticSubscription(provider.body, upstream, response.status);
   } catch (e) {
     const error =
       e instanceof AppError
@@ -166,6 +170,7 @@ export async function fetchSubscription(provider: Provider): Promise<UpstreamRes
 function staticSubscription(
   body: string,
   upstream: { body: string; bytes: number },
+  status: number,
 ): UpstreamResult {
   try {
     return {
@@ -181,8 +186,14 @@ function staticSubscription(
       upstreamBytes: upstream.bytes,
       metadataError:
         error instanceof AppError
-          ? { code: error.code, detail: error.detail ?? error.code }
-          : { code: 'INVALID_SERVICE_INFO', detail: 'INVALID_SERVICE_INFO' },
+          ? {
+              code: error.code,
+              detail: upstreamWarning(error.code, upstream.body, status),
+            }
+          : {
+              code: 'INVALID_SERVICE_INFO',
+              detail: upstreamWarning('INVALID_SERVICE_INFO', upstream.body, status),
+            },
     };
   }
 }

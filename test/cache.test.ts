@@ -92,7 +92,7 @@ describe('intermediate model cache', () => {
     expect(result.body).toContain('tag=Static');
     expect(result.cache).toBe('STALE');
     expect(result.warning).toBe(
-      'UPSTREAM_SERVICE_ERROR; upstream_code=1; upstream_message=temporary%20service%20error',
+      'UPSTREAM_SERVICE_ERROR; upstream_body=%7B%22error%22%3A1%2C%22message%22%3A%22temporary%20service%20error%22%7D',
     );
     expect(result.userinfo).toBeNull();
   });
@@ -140,7 +140,25 @@ describe('intermediate model cache', () => {
     });
 
     expect(result.status).toBe(200);
-    expect(result.warning).toBe('UPSTREAM_HTTP_ERROR; status=403');
+    expect(result.warning).toBe('UPSTREAM_HTTP_ERROR; upstream_body=Forbidden');
+  });
+
+  it('reports the HTTP status when an upstream error has no body', async () => {
+    const stub = env.SUBSCRIPTIONS.getByName('static-bandwagon-empty-http-error');
+    const staticProvider: Provider = {
+      ...provider,
+      type: 'quanx',
+      url: 'https://api.example.com/service-info',
+      body: 'shadowsocks=example.com:443, method=aes-128-gcm, password=test, tag=Static',
+    };
+
+    const result = await runInDurableObject(stub, async (instance) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 403 }));
+      const response = await instance.getSubscription(staticProvider, 'quanx');
+      return response.headers.get('x-subscription-warning');
+    });
+
+    expect(result).toBe('UPSTREAM_HTTP_ERROR; status=403');
   });
 
   it('stores one normalized model and serializes formats on demand', async () => {

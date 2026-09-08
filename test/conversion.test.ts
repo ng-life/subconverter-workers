@@ -198,8 +198,6 @@ describe('subscription formats', () => {
     } catch (error) {
       expect(error).toMatchObject({
         code: 'UPSTREAM_SERVICE_ERROR',
-        detail:
-          'UPSTREAM_SERVICE_ERROR; upstream_code=700005; upstream_message=Authentication%20failure',
       });
     }
     expect(() => bandwagonUserinfo('{}')).toThrow('UPSTREAM_SERVICE_ERROR');
