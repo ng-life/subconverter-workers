@@ -1,5 +1,13 @@
 import { DurableObject, tracing } from 'cloudflare:workers';
-import { AppError, type Output, type Provider, type SubscriptionModel, type Target } from './model';
+import {
+  AppError,
+  type Output,
+  type Provider,
+  type PushTrafficResult,
+  type SubscriptionModel,
+  type SubscriptionTraffic,
+  type Target,
+} from './model';
 import { parseSubscription } from './parsers';
 import { serialize } from './serializers';
 import { fetchSubscription } from './upstream';
@@ -14,6 +22,17 @@ interface CacheRow {
   error: string | null;
   model: string | null;
 }
+
+type TrafficRow = Record<string, SqlStorageValue> & {
+  collected_at: number;
+  received_at: number;
+  upload: number | null;
+  download: number | null;
+  total: number | null;
+  reset_at: number | null;
+  expire_at: number | null;
+  payload_hash: string;
+};
 
 export class SubscriptionCache extends DurableObject<Env> {
   private inFlight?: Promise<void>;
@@ -38,6 +57,50 @@ export class SubscriptionCache extends DurableObject<Env> {
         (id, attempted_at, fetched_at, userinfo, error, model)
       VALUES (1, 0, 0, NULL, NULL, NULL)
     `);
+    ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS traffic_metadata (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        collected_at INTEGER NOT NULL,
+        received_at INTEGER NOT NULL,
+        upload INTEGER,
+        download INTEGER,
+        total INTEGER,
+        reset_at INTEGER,
+        expire_at INTEGER,
+        payload_hash TEXT NOT NULL
+      )
+    `);
+  }
+
+  async pushTraffic(traffic: SubscriptionTraffic): Promise<PushTrafficResult> {
+    const current = this.ctx.storage.sql
+      .exec<TrafficRow>(
+        'SELECT collected_at, received_at, upload, download, total, reset_at, expire_at, payload_hash FROM traffic_metadata WHERE id = 1',
+      )
+      .toArray()[0];
+    if (current) {
+      if (traffic.collectedAt < current.collected_at)
+        return { status: 'stale', collectedAt: current.collected_at };
+      if (traffic.collectedAt === current.collected_at)
+        return {
+          status: traffic.payloadHash === current.payload_hash ? 'unchanged' : 'conflict',
+          collectedAt: current.collected_at,
+        };
+    }
+    this.ctx.storage.sql.exec(
+      `INSERT OR REPLACE INTO traffic_metadata
+       (id, collected_at, received_at, upload, download, total, reset_at, expire_at, payload_hash)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      traffic.collectedAt,
+      Math.floor(Date.now() / 1000),
+      traffic.upload ?? null,
+      traffic.download ?? null,
+      traffic.total ?? null,
+      traffic.resetAt ?? null,
+      traffic.expireAt ?? null,
+      traffic.payloadHash,
+    );
+    return { status: 'created', collectedAt: traffic.collectedAt };
   }
 
   async getSubscription(
@@ -158,10 +221,39 @@ export class SubscriptionCache extends DurableObject<Env> {
       'x-subscription-refresh-after': String(Math.max(0, Math.ceil((nextRefreshAt - now) / 1000))),
       'x-subscription-skipped': String(output.skipped),
     });
-    if (state.userinfo !== null) headers.set('subscription-userinfo', state.userinfo);
+    const traffic = provider.url === '' ? this.traffic() : undefined;
+    if (traffic) {
+      const fields: Array<[string, number | null]> = [
+        ['upload', traffic.upload],
+        ['download', traffic.download],
+        ['total', traffic.total],
+        ['expire', traffic.expire_at ?? traffic.reset_at],
+      ];
+      const userinfo = fields
+        .filter((entry): entry is [string, number] => entry[1] !== null)
+        .map(([key, value]) => `${key}=${value}`)
+        .join('; ');
+      if (userinfo) headers.set('subscription-userinfo', userinfo);
+      headers.set(
+        'x-subscription-traffic-updated-at',
+        new Date(traffic.collected_at * 1000).toISOString(),
+      );
+      headers.set(
+        'x-subscription-traffic-age',
+        String(Math.max(0, Math.floor(Date.now() / 1000) - traffic.collected_at)),
+      );
+    } else if (state.userinfo !== null) headers.set('subscription-userinfo', state.userinfo);
     if (state.error !== null) headers.set('x-subscription-warning', state.error);
 
     return new Response(output.body, { headers });
+  }
+
+  private traffic(): TrafficRow | undefined {
+    return this.ctx.storage.sql
+      .exec<TrafficRow>(
+        'SELECT collected_at, received_at, upload, download, total, reset_at, expire_at, payload_hash FROM traffic_metadata WHERE id = 1',
+      )
+      .toArray()[0];
   }
 
   private state(): CacheRow {
@@ -207,7 +299,7 @@ export class SubscriptionCache extends DurableObject<Env> {
       span.setAttributes({
         'subscription.provider': provider.name,
         'subscription.input_format': provider.type,
-        'server.address': new URL(provider.url).hostname,
+        'server.address': provider.url ? new URL(provider.url).hostname : 'static',
       });
       logEvent('info', 'subscription.cache.refresh.started', {
         provider: provider.name,
@@ -229,9 +321,16 @@ export class SubscriptionCache extends DurableObject<Env> {
           async (fetchSpan) => {
             fetchSpan.setAttributes({
               'subscription.provider': provider.name,
-              'server.address': new URL(provider.url).hostname,
+              'server.address': provider.url ? new URL(provider.url).hostname : 'static',
             });
-            const result = await fetchSubscription(provider);
+            const result = provider.url
+              ? await fetchSubscription(provider)
+              : {
+                  body: provider.body!,
+                  userinfo: null,
+                  upstreamBytes: new TextEncoder().encode(provider.body!).byteLength,
+                  metadataError: null,
+                };
             fetchSpan.setAttribute('subscription.upstream_bytes', result.upstreamBytes);
             fetchSpan.setAttribute('subscription.static_body', provider.body !== undefined);
             if (result.metadataError) {

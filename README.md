@@ -70,6 +70,55 @@ Durable Object 只保存一份中间模型，不保存各目标格式的副本�
 
 `cacheTtlSeconds` 默认为 300 秒。旧配置项 `minRefreshIntervalSeconds` 仍然兼容，但新配置应使用 `cacheTtlSeconds`。
 
+### VPS 主动上报流量
+
+Provider 显式配置 `url: ""` 时进入 Push 模式。该模式仍从非空 `body` 读取静态节点，但只接受 VPS 上报的流量元数据，不请求上游 URL：
+
+```json
+{
+  "bwh": {
+    "type": "quanx",
+    "url": "",
+    "body": "shadowsocks=example.com:443, method=aes-128-gcm, password=PASSWORD, tag=bwh",
+    "cacheTtlSeconds": 300
+  }
+}
+```
+
+上报接口使用独立的 `PUSH_TOKEN` Bearer 鉴权：
+
+```http
+POST /internal/providers/bwh/traffic
+Authorization: Bearer PUSH_TOKEN
+Content-Type: application/json
+
+{
+  "schemaVersion": 1,
+  "collectedAt": 1788879000,
+  "subscription": {
+    "upload": 0,
+    "download": 42838656123,
+    "total": 1099511627776,
+    "resetAt": 1790803200,
+    "expireAt": 1798761600
+  }
+}
+```
+
+- `collectedAt` 和流量字段使用非负安全整数；流量单位是 byte，时间是 Unix 秒。
+- `upload`、`download`、`total` 至少提供一个。`resetAt`、`expireAt` 可选。
+- 重复上报相同数据幂等成功；旧数据或相同时间的冲突数据返回 `409`。
+- `url` 非空的 Pull Provider 返回 `409 PROVIDER_NOT_PUSH_ENABLED`，不会改变原有拉取行为。
+- 可附带 reporter 的 `monitor` 对象；Worker 为兼容上报格式接受但不保存它。
+
+公开订阅响应会附加可用字段，并优先使用 `expireAt`，没有时使用 `resetAt`：
+
+```http
+Subscription-Userinfo: upload=0; download=42838656123; total=1099511627776; expire=1798761600
+X-Subscription-Traffic-Updated-At: 2026-09-09T04:10:00.000Z
+X-Subscription-Traffic-Age: 120
+```
+
 ### 静态 QuanX 节点与搬瓦工流量
 
 当节点由自己维护、`url` 仅用于查询搬瓦工 KiwiVM 服务信息时，可以在 QuanX Provider 中增加 `body`：
@@ -99,7 +148,13 @@ npm install
 npm run dev
 ```
 
-生产环境应将 `TOKEN` 配置为 Worker Secret，不要提交到仓库。
+生产环境应将访问 Token、Push Token 和 Provider 配置为 Worker Secret，不要提交到仓库：
+
+```bash
+npx wrangler secret put TOKEN
+npx wrangler secret put PUSH_TOKEN
+npx wrangler secret put PROVIDERS
+```
 
 ## 验证与部署
 

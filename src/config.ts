@@ -56,10 +56,12 @@ export function getProvider(raw: unknown, name: string): Provider {
         throw new Error('Invalid interval');
       return v;
     };
+    const url = p.url === '' ? '' : upstreamUrl(p.url).href;
+    if (!url && body === undefined) throw new Error('Push provider requires a static body');
     return {
       name,
       type: type as InputType,
-      url: upstreamUrl(p.url).href,
+      url,
       body,
       headers: Object.fromEntries(Object.entries(headers).sort(([a], [b]) => a.localeCompare(b))),
       // Keep accepting the original option so existing deployments do not break.

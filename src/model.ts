@@ -38,6 +38,22 @@ export interface Provider {
   cacheTtlSeconds: number;
   timeoutSeconds: number;
 }
+
+export interface SubscriptionTraffic {
+  schemaVersion: 1;
+  collectedAt: number;
+  upload?: number;
+  download?: number;
+  total?: number;
+  resetAt?: number;
+  expireAt?: number;
+  payloadHash: string;
+}
+
+export interface PushTrafficResult {
+  status: 'created' | 'unchanged' | 'stale' | 'conflict';
+  collectedAt: number;
+}
 export class AppError extends Error {
   constructor(
     public status: number,

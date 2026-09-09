@@ -11,6 +11,7 @@ function createEnv() {
   return {
     env: {
       TOKEN: 'test-token',
+      PUSH_TOKEN: 'test-push-token',
       PROVIDERS: JSON.stringify({
         mysub: {
           type: 'uri',
@@ -90,5 +91,73 @@ describe('request routing', () => {
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: 'UNAUTHORIZED' });
     expect(getSubscription).not.toHaveBeenCalled();
+  });
+});
+
+describe('traffic push routing', () => {
+  function createPushEnv(url = '') {
+    const pushTraffic = vi.fn(async () => ({ status: 'created' as const, collectedAt: 100 }));
+    return {
+      env: {
+        TOKEN: 'test-token',
+        PUSH_TOKEN: 'test-push-token',
+        PROVIDERS: JSON.stringify({
+          bwh: {
+            type: 'quanx',
+            url,
+            body: 'shadowsocks=example.com:443, method=aes-128-gcm, password=test, tag=bwh',
+          },
+        }),
+        SUBSCRIPTIONS: { getByName: vi.fn(() => ({ pushTraffic })) },
+      } as unknown as Env,
+      pushTraffic,
+    };
+  }
+
+  function request(token = 'test-push-token'): Parameters<typeof worker.fetch>[0] {
+    return new Request('https://worker.example/internal/providers/bwh/traffic', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        schemaVersion: 1,
+        collectedAt: 100,
+        subscription: { upload: 0, download: 10, total: 100, resetAt: 200 },
+        monitor: { status: 'Running' },
+      }),
+    }) as Parameters<typeof worker.fetch>[0];
+  }
+
+  it('accepts authenticated reports only for providers with an empty URL', async () => {
+    const { env, pushTraffic } = createPushEnv();
+    const response = await worker.fetch(request(), env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ provider: 'bwh', collectedAt: 100, updated: true });
+    expect(pushTraffic).toHaveBeenCalledWith(
+      expect.objectContaining({ upload: 0, download: 10, total: 100, resetAt: 200 }),
+    );
+  });
+
+  it('rejects invalid tokens and pull providers', async () => {
+    expect((await worker.fetch(request('wrong'), createPushEnv().env)).status).toBe(401);
+    const pull = createPushEnv('https://upstream.example/sub');
+    const response = await worker.fetch(request(), pull.env);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'PROVIDER_NOT_PUSH_ENABLED' });
+    expect(pull.pushTraffic).not.toHaveBeenCalled();
+  });
+
+  it('validates content type and payload', async () => {
+    const { env } = createPushEnv();
+    const invalidType = request();
+    invalidType.headers.set('content-type', 'text/plain');
+    expect((await worker.fetch(invalidType, env)).status).toBe(415);
+    const invalidPayload = request();
+    invalidPayload.headers.set('content-type', 'application/json');
+    const malformed = new Request(invalidPayload.url, {
+      method: 'POST',
+      headers: invalidPayload.headers,
+      body: JSON.stringify({ schemaVersion: 1, collectedAt: -1, subscription: {} }),
+    }) as Parameters<typeof worker.fetch>[0];
+    expect((await worker.fetch(malformed, env)).status).toBe(400);
   });
 });

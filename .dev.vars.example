@@ -1,2 +1,3 @@
 TOKEN=replace-with-a-long-random-token
-PROVIDERS={"mysub":{"type":"base64","url":"https://example.com/subscribe","cacheTtlSeconds":300}}
+PUSH_TOKEN=replace-with-an-independent-long-random-token
+PROVIDERS={"mysub":{"type":"base64","url":"https://example.com/subscribe","cacheTtlSeconds":300},"bwh":{"type":"quanx","url":"","body":"shadowsocks=example.com:443, method=aes-128-gcm, password=replace-me, tag=bwh","cacheTtlSeconds":300}}

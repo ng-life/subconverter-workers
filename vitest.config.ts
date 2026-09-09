@@ -11,6 +11,7 @@ export default defineConfig({
         compatibilityDate: '2026-08-22',
         bindings: {
           TOKEN: 'test-token',
+          PUSH_TOKEN: 'test-push-token',
           PROVIDERS: JSON.stringify({
             mysub: { type: 'uri', url: 'https://upstream.example/sub', cacheTtlSeconds: 300 },
           }),

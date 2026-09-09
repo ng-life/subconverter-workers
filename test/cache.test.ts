@@ -28,6 +28,79 @@ afterEach(async () => {
 });
 
 describe('intermediate model cache', () => {
+  it('persists pushed traffic and exposes it with static nodes', async () => {
+    const stub = env.SUBSCRIPTIONS.getByName('pushed-traffic');
+    const pushProvider: Provider = {
+      ...provider,
+      type: 'quanx',
+      url: '',
+      body: 'shadowsocks=example.com:443, method=aes-128-gcm, password=test, tag=Static',
+    };
+
+    const result = await runInDurableObject(stub, async (instance) => {
+      const pushed = await instance.pushTraffic({
+        schemaVersion: 1,
+        collectedAt: 1_790_000_000,
+        upload: 0,
+        download: 100,
+        total: 1000,
+        resetAt: 1_800_000_000,
+        payloadHash: 'hash',
+      });
+      const duplicate = await instance.pushTraffic({
+        schemaVersion: 1,
+        collectedAt: 1_790_000_000,
+        upload: 0,
+        download: 100,
+        total: 1000,
+        resetAt: 1_800_000_000,
+        payloadHash: 'hash',
+      });
+      const response = await instance.getSubscription(pushProvider, 'quanx');
+      return {
+        pushed,
+        duplicate,
+        body: await response.text(),
+        userinfo: response.headers.get('subscription-userinfo'),
+        updatedAt: response.headers.get('x-subscription-traffic-updated-at'),
+      };
+    });
+
+    expect(result.pushed.status).toBe('created');
+    expect(result.duplicate.status).toBe('unchanged');
+    expect(result.body).toContain('tag=Static');
+    expect(result.userinfo).toBe('upload=0; download=100; total=1000; expire=1800000000');
+    expect(result.updatedAt).toBe('2026-09-21T14:13:20.000Z');
+  });
+
+  it('rejects older and conflicting pushed traffic', async () => {
+    const stub = env.SUBSCRIPTIONS.getByName('pushed-traffic-order');
+    const result = await runInDurableObject(stub, async (instance) => {
+      await instance.pushTraffic({
+        schemaVersion: 1,
+        collectedAt: 20,
+        total: 100,
+        payloadHash: 'a',
+      });
+      return {
+        stale: await instance.pushTraffic({
+          schemaVersion: 1,
+          collectedAt: 19,
+          total: 90,
+          payloadHash: 'b',
+        }),
+        conflict: await instance.pushTraffic({
+          schemaVersion: 1,
+          collectedAt: 20,
+          total: 90,
+          payloadHash: 'b',
+        }),
+      };
+    });
+    expect(result.stale.status).toBe('stale');
+    expect(result.conflict.status).toBe('conflict');
+  });
+
   it('uses a static QuanX body and exposes Bandwagon traffic metadata', async () => {
     const stub = env.SUBSCRIPTIONS.getByName('static-bandwagon');
     const staticProvider: Provider = {
