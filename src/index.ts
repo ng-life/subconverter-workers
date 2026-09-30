@@ -146,6 +146,21 @@ export function forceRefresh(url: URL): boolean {
   throw new AppError(400, 'INVALID_REFRESH_PARAMETER');
 }
 
+/** Parse a comma-separated list of case-insensitive node-name substrings. */
+export function parseKeywords(url: URL): string[] {
+  const values = url.searchParams.getAll('keywords');
+  if (!values.length) return [];
+  if (values.length !== 1 || values[0].length > 1024)
+    throw new AppError(400, 'INVALID_KEYWORDS_PARAMETER');
+  const keywords = values[0]
+    .split(',')
+    .map((keyword) => keyword.trim())
+    .filter(Boolean);
+  if (!keywords.length || keywords.some((keyword) => keyword.length > 128))
+    throw new AppError(400, 'INVALID_KEYWORDS_PARAMETER');
+  return keywords;
+}
+
 function errorResponse(error: AppError): Response {
   const headers: Record<string, string> = {
     'cache-control': 'no-store',
@@ -217,15 +232,17 @@ export default {
           authenticate(url, runtime.TOKEN),
         );
         const refresh = forceRefresh(url);
+        const keywords = parseKeywords(url);
         span.setAttribute('subscription.cache.force_refresh', refresh);
 
         const provider = getProvider(runtime.PROVIDERS, providerName);
         // Provider configuration is part of the identity so a config change gets
         // a fresh Durable Object without mutating or mixing the previous cache.
         // Exclude the new diagnostic name field to preserve existing cache IDs.
-        const response = await (
-          await providerCache(env, providerName, provider)
-        ).getSubscription(provider, target, refresh);
+        const subscriptionCache = await providerCache(env, providerName, provider);
+        const response = await (keywords.length
+          ? subscriptionCache.getSubscription(provider, target, refresh, keywords)
+          : subscriptionCache.getSubscription(provider, target, refresh));
         response.headers.set('x-content-type-options', 'nosniff');
 
         const cacheStatus = response.headers.get('x-subscription-cache') ?? 'NONE';
@@ -241,6 +258,7 @@ export default {
           nodeCount: response.headers.get('x-subscription-node-count'),
           skippedCount: response.headers.get('x-subscription-skipped'),
           forceRefresh: refresh,
+          keywordCount: keywords.length,
           durationMs: Date.now() - startedAt,
         });
 

@@ -5,13 +5,14 @@
 ## 请求地址
 
 ```text
-https://host/providerName/format?token=TOKEN
+https://host/providerName/format?token=TOKEN&keywords=w1,w2,w3
 ```
 
 - `providerName`：`PROVIDERS` 配置中的 Provider 名称。
 - `format`：`clash`、`loon`、`quanx` 或 `shadowsocks`。
 - `token`：必须与 Worker Secret `TOKEN` 一致。
 - `refresh`：可选；设置为 `true` 或 `1` 时忽略 TTL 并强制刷新缓存。
+- `keywords`：可选；逗号分隔的节点名称关键字，只保留名称包含任一关键字的节点，匹配不区分大小写。
 
 例如：
 
@@ -19,6 +20,7 @@ https://host/providerName/format?token=TOKEN
 https://sub.example.com/mysub/clash?token=TOKEN
 https://sub.example.com/mysub/quanx?token=TOKEN
 https://sub.example.com/mysub/quanx?token=TOKEN&refresh=true
+https://sub.example.com/mysub/clash?token=TOKEN&keywords=w1,w2,w3
 ```
 
 ## 缓存流程

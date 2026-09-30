@@ -107,6 +107,7 @@ export class SubscriptionCache extends DurableObject<Env> {
     provider: Provider,
     target: Target,
     forceRefresh = false,
+    keywords: string[] = [],
   ): Promise<Response> {
     return tracing.enterSpan('subscription.cache', async (span) => {
       span.setAttributes({
@@ -114,7 +115,7 @@ export class SubscriptionCache extends DurableObject<Env> {
         'subscription.format': target,
         'subscription.cache.force_refresh': forceRefresh,
       });
-      const response = await this.resolveSubscription(provider, target, forceRefresh);
+      const response = await this.resolveSubscription(provider, target, forceRefresh, keywords);
       span.setAttributes({
         'http.response.status_code': response.status,
         'subscription.cache.status': response.headers.get('x-subscription-cache') ?? 'NONE',
@@ -128,6 +129,7 @@ export class SubscriptionCache extends DurableObject<Env> {
     provider: Provider,
     target: Target,
     forceRefresh: boolean,
+    keywords: string[],
   ): Promise<Response> {
     const before = this.state();
     const now = Date.now();
@@ -187,7 +189,16 @@ export class SubscriptionCache extends DurableObject<Env> {
           'subscription.format': target,
           'subscription.input_node_count': model.nodes.length,
         });
-        const value = serialize(model, target);
+        const filteredModel = keywords.length
+          ? {
+              ...model,
+              nodes: model.nodes.filter((node) => {
+                const name = node.name.toLowerCase();
+                return keywords.some((keyword) => name.includes(keyword.toLowerCase()));
+              }),
+            }
+          : model;
+        const value = serialize(filteredModel, target);
         span.setAttributes({
           'subscription.output_node_count': value.count,
           'subscription.skipped_node_count': value.skipped,
